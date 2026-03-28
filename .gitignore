@@ -1,9 +1,9 @@
 # Credentials — NEVER commit
+.env
 config/credentials.yaml
-*.env
 
-# Data storage
-data/
+# Data storage (runtime ArcticDB/SQLite databases, not source code)
+/data/
 
 # Python
 __pycache__/

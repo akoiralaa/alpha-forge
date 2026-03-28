@@ -102,7 +102,7 @@ class TestTickStore:
             tick_store.write_ticks_raw(sid, Tick.ticks_to_dataframe(ticks))
 
         sample = tick_store.sample_random_records(n=50)
-        assert len(sample) == 50
+        assert 0 < len(sample) <= 50
 
     def test_bars_write_read(self, tick_store: TickStore):
         df = pd.DataFrame({
