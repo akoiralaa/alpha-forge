@@ -1,0 +1,41 @@
+# Credentials — NEVER commit
+config/credentials.yaml
+*.env
+
+# Data storage
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# C++ build artifacts
+src/cpp/build/
+*.so
+*.dylib
+*.dll
+*.o
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Virtual environments
+.venv/
+venv/

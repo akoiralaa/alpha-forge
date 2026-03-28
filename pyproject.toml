@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "one-brain-fund"
+version = "0.1.0"
+description = "One Brain Quantitative Execution Factory"
+requires-python = ">=3.12"
+dependencies = [
+    # Phase 1: Data Layer
+    "arcticdb>=4.5.0",
+    "ib_insync>=0.9.86",
+    "polygon-api-client>=1.13.0",
+    "sqlalchemy>=2.0",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "pyarrow>=15.0",
+
+    # Phase 3: Backtester
+    "scipy>=1.12",
+
+    # Phase 4: Signals
+    "scikit-learn>=1.4",
+    "lightgbm>=4.3",
+    "statsmodels>=0.14",
+
+    # Phase 6: Regime Detection
+    "hmmlearn>=0.3",
+
+    # Phase 8: Monitoring
+    "prometheus-client>=0.20",
+
+    # Testing
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.3",
+    "mypy>=1.9",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

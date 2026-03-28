@@ -1,0 +1,75 @@
+# Phase 1: Data Layer Configuration
+# Every parameter change is a git commit with a message explaining why.
+
+storage:
+  arcticdb_path: "~/one_brain_fund/data/arcticdb"
+  symbol_master_path: "~/one_brain_fund/data/symbol_master.db"
+  fundamentals_path: "~/one_brain_fund/data/fundamentals.db"
+
+quality_pipeline:
+  price_deviation_pct: 0.10          # 10% from rolling mean = fat finger
+  volume_spike_factor: 100.0         # 100x rolling avg = volume spike
+  max_capture_lag_ns: 10000000000    # 10 seconds max capture-exchange lag
+  rolling_price_window: 20
+  rolling_volume_window: 100
+  alert_rejection_rate: 0.001        # 0.1% rejection rate triggers alert
+
+universe_filters:
+  equity_adv_min_usd: 10000000       # $10M 20-day ADV
+  equity_price_min: 5.0              # $5 minimum price
+  equity_market_cap_min: 500000000   # $500M market cap
+  eq_futures_oi_min: 10000           # 10,000 contracts avg OI
+  fx_daily_notional_min: 100000000   # $100M daily notional
+  commodity_oi_min: 5000             # 5,000 contracts avg OI
+
+# Standard instrument universe from build protocol
+instruments:
+  sector_etfs:
+    - SPY
+    - QQQ
+    - XLK
+    - XLV
+    - XLE
+    - XLF
+    - XLI
+    - XLB
+    - XLU
+    - XLRE
+    - XLC
+    - XLP
+    - XLY
+
+  equity_index_futures:
+    - ES
+    - NQ
+    - RTY
+    - YM
+
+  commodity_futures:
+    - CL    # crude oil
+    - NG    # natural gas
+    - GC    # gold
+    - SI    # silver
+    - HG    # copper
+    - ZC    # corn
+    - ZW    # wheat
+    - ZS    # soybeans
+
+  fixed_income_futures:
+    - ZN    # 10-year treasury
+    - ZB    # 30-year treasury
+    - ZF    # 5-year treasury
+    - ZT    # 2-year treasury
+    - GE    # eurodollar
+
+  fx_pairs:
+    - EURUSD
+    - USDJPY
+    - GBPUSD
+    - AUDUSD
+    - USDCAD
+    - USDCHF
+    - NZDUSD
+
+  vix_futures:
+    - VX
