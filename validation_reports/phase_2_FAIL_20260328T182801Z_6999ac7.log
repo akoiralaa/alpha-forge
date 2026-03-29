@@ -1,0 +1,10 @@
+Phase 2 Validation Gate: ANY_FAIL
+============================================================
+  msv_field_coverage: PASS — 34 fields present, 0 missing: []
+  welford_numerical_accuracy: PASS — mean_err=1.14e-12, var_err=4.00e-11, win_mean_err=9.66e-13
+  circular_buffer_correctness: PASS — size=100, newest=249.0, oldest=150.0
+  warmup_behavior: PASS — valid=False for first 499 ticks, True at tick 500
+  deterministic_replay: PASS — 1000-tick replay: all MSV fields bit-identical across two engine instances
+  pybind11_roundtrip: PASS — symbol_id=42, valid=True, ticks=20
+  throughput_benchmark: FAIL — 118,711 ticks/sec (500,000 ticks in 4.212s) — target >= 1M/s
+============================================================

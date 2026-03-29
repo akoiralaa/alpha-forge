@@ -1,0 +1,59 @@
+========================================================================
+  PHASE [1] VALIDATION REPORT
+  Phase name:     Data Layer
+  Executed at:    2026-03-28T07:46:02.564075+00:00
+  Git commit:     6999ac7f5f4044bce885b472c4ffec1e4eb5eec4
+  Gate result:    ALL_PASS
+========================================================================
+
+ASSERTION RESULTS
+------------------------------------------------------------------------
+[survivorship_bias_check]
+  Observed : 50 delisted instruments found in 2010 universe
+  Target   : count >= 50
+  Result   : PASS
+  Notes    : Instruments that existed in 2010 but were later delisted must be present
+
+[dual_timestamp_coverage]
+  Observed : 9632/9632 records valid (100.0%)
+  Target   : 100.0% have both exchange_time_ns != 0 and capture_time_ns != 0
+  Result   : PASS
+
+[capture_time_ordering]
+  Observed : 35 symbols tested, all strictly monotonic
+  Target   : Strictly monotonically increasing capture_time_ns for all symbols
+  Result   : PASS
+
+[pit_fundamental_integrity]
+  Observed : published_at_ns=1556582400000000000 (as_of=1559347200000000000)
+  Target   : published_at_ns <= as_of_ns
+  Result   : PASS
+  Notes    : Symbol 14, value=2.46
+
+[split_adjustment_correctness]
+  Observed : Adjusted prices continuous across split
+  Target   : adjusted_price before split == adjusted_price after split (within 0.01%)
+  Result   : PASS
+  Notes    : Tested symbol 14
+
+[quality_pipeline_rejection]
+  Observed : 100/100 bad records rejected (100.0%)
+  Target   : 100% of injected bad records rejected
+  Result   : PASS
+  Notes    : Tested: zero price, crossed book, time travel, negative bid, stale data
+
+[universe_point_in_time]
+  Observed : 2015 universe: 0 instruments, today: 28 instruments, differ=True
+  Target   : Two universes must differ (universe changes over time)
+  Result   : PASS
+
+------------------------------------------------------------------------
+
+SUMMARY
+  Total assertions : 7
+  Passed           : 7
+  Failed           : 0
+  Gate result      : ALL_PASS
+
+  Cleared to proceed to Phase [2].
+  Report archived to: validation_reports/phase_1_2026-03-28T07:46:02.564075+00:00.log

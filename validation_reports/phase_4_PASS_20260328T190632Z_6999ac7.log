@@ -1,0 +1,9 @@
+Phase 4 Validation Gate: ALL_PASS
+============================================================
+  tier1_sign_correctness: PASS — mean_rev=0.750, mom=1.000, ofi=1.000, vol_anom=0.500
+  oos_sharpe_positive: PASS — lasso:3/3, ridge:3/3, elasticnet:3/3, lightgbm:3/3, random_forest:3/3
+  permutation_test_all_signals: PASS — mean_rev: real=17.43 p95=14.23; ridge: real=6.11 p95=2.42
+  stationarity_all_features: PASS — 19 features tested, 0 failed: []
+  decay_sensitivity: PASS — Half-lives: mean_reversion=246s, momentum=101s, ofi=336s, volume_anomaly=471s
+  combiner_down_weights_zero_sharpe: PASS — mock_bad weight=0.0000 (must be 0.0)
+============================================================

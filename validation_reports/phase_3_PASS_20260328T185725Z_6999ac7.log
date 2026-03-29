@@ -1,0 +1,10 @@
+Phase 3 Validation Gate: ALL_PASS
+============================================================
+  lookahead_impossible: PASS — Lookahead Sharpe=-0.2444 (must be < 0.1 with latency+costs)
+  latency_injection_active: PASS — PnL@0ms=690.47 (996 trades), PnL@100ms=573.29 (996 trades)
+  cost_model_active: PASS — PnL_nocost=23926.99 (1660 trades), PnL_cost=22350.00 (1660 trades), total_cost_bps=11882.5
+  walk_forward_embargo: PASS — embargo=30d >= lookback=30d, 12 windows, no overlap
+  lock_box_virgin: PASS — access_count=0 (must be 0)
+  stress_test_survival: PASS — 4 scenarios tested — LIQUIDITY_BLACKOUT:dd=0.00%, GAP_DOWN_10PCT:dd=0.00%, FEED_OUTAGE_5S:dd=0.00%, CORRELATION_CRISIS:dd=0.00%
+  monte_carlo_permutation: PASS — real_sharpe=5.9468, perm_p95=1.8456 (100 permutations)
+============================================================
