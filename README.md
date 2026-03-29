@@ -1,8 +1,6 @@
-# One Brain Quantitative Execution Factory
+# Cross-Asset Algorithmic Trading Platform
 
-A unified quantitative trading system that finds statistical edges across every liquid asset class — equities, futures, FX, commodities, and bonds — sizes each bet correctly relative to its risk, and executes at institutional speed.
-
-One brain. Not one hundred.
+A systematic trading engine that detects statistical edges across equities, futures, FX, commodities, and fixed income — sizes positions using Kelly-optimal risk budgets, and executes with sub-millisecond latency tracking.
 
 ## Architecture
 
@@ -68,7 +66,7 @@ The system is built and validated in strict sequential phases. Each phase has a 
 ### Installation
 
 ```bash
-git clone https://github.com/akoiralaa/one_brain_fund.git && cd one_brain_fund
+git clone https://github.com/akoiralaa/algorithmic-trading-platform.git && cd algorithmic-trading-platform
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
