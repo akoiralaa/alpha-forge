@@ -3,14 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "one-brain-fund"
+name = "algorithmic-trading-platform"
 version = "0.1.0"
-description = "One Brain Quantitative Execution Factory"
+description = "Cross-asset algorithmic trading platform"
 requires-python = ">=3.12"
 dependencies = [
     # Phase 1: Data Layer
     "arcticdb>=4.5.0",
-    "ib_insync>=0.9.86",
+    "ib_async>=1.0.0",
     "polygon-api-client>=1.13.0",
     "sqlalchemy>=2.0",
     "pandas>=2.2",

@@ -37,9 +37,12 @@ class IBKRProvider(DataProvider):
 
     def connect(self) -> None:
         try:
-            from ib_insync import IB
+            from ib_async import IB
         except ImportError:
-            raise ImportError("ib_insync is required: pip install ib_insync")
+            try:
+                from ib_insync import IB
+            except ImportError:
+                raise ImportError("ib_async is required: pip install ib_async")
 
         self._ib = IB()
         host = self.config.host or "127.0.0.1"
@@ -59,7 +62,10 @@ class IBKRProvider(DataProvider):
         logger.info("Disconnected from IB")
 
     def _make_contract(self, symbol: str, asset_class: AssetClass):
-        from ib_insync import Contract, Forex, Future, Stock
+        try:
+            from ib_async import Contract, Forex, Future, Stock
+        except ImportError:
+            from ib_insync import Contract, Forex, Future, Stock
 
         cache_key = f"{symbol}:{asset_class.value}"
         if cache_key in self._contracts_cache:

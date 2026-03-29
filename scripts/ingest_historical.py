@@ -21,7 +21,10 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 import numpy as np
 import pandas as pd
-from ib_insync import IB, Contract, Forex, Future, Stock, util
+try:
+    from ib_async import IB, Contract, Forex, Future, Stock, util
+except ImportError:
+    from ib_insync import IB, Contract, Forex, Future, Stock, util
 
 from src.data.arctic_store import TickStore
 from src.data.fundamentals import FundamentalRecord, FundamentalsStore
