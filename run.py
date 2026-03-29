@@ -137,6 +137,10 @@ def run(args):
 
     log.info("Qualified %d/%d symbols", len(qualified), len(symbols))
 
+    # request delayed data if live isn't available
+    ib.reqMarketDataType(4)  # 4 = delayed frozen, 3 = delayed, 1 = live
+    log.info("Requesting delayed market data (upgrade IB subscription for live)")
+
     # subscribe to market data
     contract_to_sid = {}
     for sym, (contract, sid) in SYMBOL_MAP.items():
