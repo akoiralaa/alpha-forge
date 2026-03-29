@@ -1,11 +1,9 @@
-"""Position sizing: volatility-scaled with fractional Kelly constraint."""
 
 from __future__ import annotations
 
 import math
 
 import numpy as np
-
 
 def compute_position_size(
     symbol_id: int,
@@ -16,10 +14,6 @@ def compute_position_size(
     daily_vol: float = 0.02,
     kelly_fraction: float = 0.25,
 ) -> int:
-    """Compute position size with vol-scaling and fractional Kelly constraint.
-
-    Returns signed number of shares/contracts (positive=long, negative=short).
-    """
     if abs(signal_score) < 1e-10 or current_price <= 0 or daily_vol <= 0:
         return 0
 

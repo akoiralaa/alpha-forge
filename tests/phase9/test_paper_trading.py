@@ -1,4 +1,3 @@
-"""Phase 9 tests — Paper trading end-to-end integration."""
 
 from __future__ import annotations
 
@@ -15,14 +14,11 @@ from src.paper.engine import PaperConfig, PaperTick, PaperTradingEngine
 from src.execution.kill_switch import KillLevel
 from src.execution.wal import OrderState
 
-
 def _make_tick(sid: int, price: float, volume: int = 1000, ts: int = 0) -> PaperTick:
     return PaperTick(symbol_id=sid, price=price, volume=volume, timestamp_ns=ts or time.time_ns())
 
-
 def _generate_trending_ticks(sid: int, n: int = 200, start_price: float = 100.0,
                               drift: float = 0.001, noise: float = 0.005) -> list[PaperTick]:
-    """Generate trending price series with noise."""
     rng = np.random.default_rng(42)
     prices = [start_price]
     for i in range(n - 1):
@@ -30,10 +26,8 @@ def _generate_trending_ticks(sid: int, n: int = 200, start_price: float = 100.0,
         prices.append(prices[-1] * (1 + ret))
     return [_make_tick(sid, p, 1000, i * 1_000_000) for i, p in enumerate(prices)]
 
-
 def _generate_mean_reverting_ticks(sid: int, n: int = 300,
                                      center: float = 100.0) -> list[PaperTick]:
-    """Generate mean-reverting series — should trigger mean-reversion signals."""
     rng = np.random.default_rng(42)
     price = center
     ticks = []
@@ -42,7 +36,6 @@ def _generate_mean_reverting_ticks(sid: int, n: int = 300,
         price = center + (price - center) * 0.95 + noise
         ticks.append(_make_tick(sid, max(price, 1.0), 1000, i * 1_000_000))
     return ticks
-
 
 # ── Core Integration Tests ──────────────────────────────────────
 
@@ -65,7 +58,6 @@ class TestPaperTradingEngine:
         assert stats.reconciliation_runs >= 1
 
     def test_orders_generated(self):
-        """With enough ticks, signals should generate some orders."""
         engine = PaperTradingEngine(PaperConfig(signal_threshold=0.05))
         ticks = _generate_mean_reverting_ticks(1, n=300)
         stats = engine.run_session(ticks)
@@ -89,7 +81,6 @@ class TestPaperTradingEngine:
             combined.append(ticks2[i])
         engine.run_session(combined)
         assert engine.stats.ticks_processed == 300
-
 
 # ── WAL Integration ─────────────────────────────────────────────
 
@@ -115,7 +106,6 @@ class TestWALIntegration:
                 OrderState.FILLED, OrderState.REJECTED,
                 OrderState.CANCELLED, OrderState.ERROR,
             )
-
 
 # ── Kill Switch Integration ────────────────────────────────────
 
@@ -154,7 +144,6 @@ class TestKillSwitchIntegration:
         # Kill switch should have activated
         assert engine.kill_switch.level >= KillLevel.FLATTEN or engine.portfolio.drawdown_pct > 0
 
-
 # ── Risk Integration ───────────────────────────────────────────
 
 class TestRiskIntegration:
@@ -174,7 +163,6 @@ class TestRiskIntegration:
             1, 1, 500, current_price=100.0, adv_20d=10_000_000)
         assert order.state == OrderState.REJECTED
         assert risk is not None
-
 
 # ── Reconciliation Integration ─────────────────────────────────
 
@@ -197,7 +185,6 @@ class TestReconciliationIntegration:
         engine.run_session(ticks)
         # Should have run at least 3 times (200/50=4, plus final)
         assert engine.stats.reconciliation_runs >= 4
-
 
 # ── Monitoring Integration ─────────────────────────────────────
 
@@ -234,7 +221,6 @@ class TestMonitoringIntegration:
         # 10% drawdown should trigger warning (>5%) and critical (>=10%)
         assert len(fired) >= 1
 
-
 # ── Custom Signal Function ─────────────────────────────────────
 
 class TestCustomSignal:
@@ -253,7 +239,6 @@ class TestCustomSignal:
         ticks = _generate_trending_ticks(1, n=100)
         engine.run_session(ticks)
         assert engine.stats.orders_submitted == 0
-
 
 # ── Stats Tracking ──────────────────────────────────────────────
 

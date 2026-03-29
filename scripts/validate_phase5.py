@@ -1,4 +1,3 @@
-"""Phase 5 validation gate — Portfolio, risk, sizing, HRP, attribution."""
 
 from __future__ import annotations
 
@@ -12,12 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 results: list[tuple[str, bool, str]] = []
 
-
 def gate(name: str, passed: bool, detail: str = ""):
     tag = "PASS" if passed else "FAIL"
     results.append((name, passed, detail))
     print(f"  [{tag}] {name}" + (f" — {detail}" if detail else ""))
-
 
 # ── 1. Volatility scaling ───────────────────────────────────────
 
@@ -29,7 +26,6 @@ ratio = size_high_vol / size_low_vol if size_low_vol != 0 else 0
 gate("volatility_scaling",
      abs(ratio - 0.5) < 0.05,
      f"2x vol → size ratio={ratio:.3f} (expect ~0.5)")
-
 
 # ── 2. HRP cluster balance ──────────────────────────────────────
 
@@ -51,7 +47,6 @@ gate("hrp_cluster_balance",
      cluster_weight < 0.55 and weights_positive and weights_sum_one,
      f"corr cluster weight={cluster_weight:.3f}, all positive={weights_positive}, sum={w.sum():.6f}")
 
-
 # ── 3. Drawdown circuit breaker ─────────────────────────────────
 
 from src.portfolio.risk import (
@@ -72,7 +67,6 @@ gate("drawdown_circuit_breaker",
      and not r2.passed and r2.reason == RiskCheckReason.DRAWDOWN_LEVEL2,
      f"L1={r1.reason.value}, L2={r2.reason.value}")
 
-
 # ── 4. VPIN halt ────────────────────────────────────────────────
 
 port_vpin = Portfolio(nav=1_000_000, current_vpin=0.91)
@@ -87,7 +81,6 @@ r_lmt = check.check(limit_o, port_vpin)
 gate("vpin_halt",
      not r_mkt.passed and r_mkt.reason == RiskCheckReason.VPIN_HALT and r_lmt.passed,
      f"market={r_mkt.reason.value}, limit_passed={r_lmt.passed}")
-
 
 # ── 5. Fat finger block ────────────────────────────────────────
 
@@ -105,7 +98,6 @@ gate("fat_finger_block",
      and not r_fp.passed and r_fp.reason == RiskCheckReason.FAT_FINGER_PRICE,
      f"size={r_fs.reason.value}, price={r_fp.reason.value}")
 
-
 # ── 6. Kelly constraint ────────────────────────────────────────
 
 size_unconstrained = compute_position_size(1, 0.5, 1_000_000, 0.005, 100.0, 0.02)
@@ -115,7 +107,6 @@ vol_scaled_max = int(1_000_000 * 0.005 / (100.0 * 0.02))
 gate("kelly_constraint",
      abs(size_constrained) <= vol_scaled_max and size_constrained > 0,
      f"constrained={size_constrained}, vol_max={vol_scaled_max}")
-
 
 # ── Summary ─────────────────────────────────────────────────────
 

@@ -1,4 +1,3 @@
-"""Python interface to the One Brain C++20 Feature Engine."""
 
 from __future__ import annotations
 

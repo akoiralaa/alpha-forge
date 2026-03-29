@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Populate additional data needed for Phase 1 validation gate to pass.
-
-1. Add 50+ delisted instruments for survivorship bias check
-2. Add historical fundamental records so universe queries work at different dates
-"""
 
 from __future__ import annotations
 

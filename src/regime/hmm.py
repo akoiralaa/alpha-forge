@@ -1,8 +1,3 @@
-"""Hidden Markov Model regime detector.
-
-Models regime transitions over time using Gaussian HMM.
-Captures temporal persistence — regimes tend to be sticky.
-"""
 
 from __future__ import annotations
 
@@ -12,19 +7,15 @@ from typing import Optional
 import numpy as np
 from hmmlearn.hmm import GaussianHMM
 
-
 @dataclass
 class HMMState:
-    """Result of HMM state inference at a single timestep."""
     state_id: int
     state_label: str
     state_probs: np.ndarray
     confidence: float
     transition_prob: float    # P(switch from previous state to current)
 
-
 class HMMRegimeDetector:
-    """Gaussian HMM for regime detection with temporal dynamics."""
 
     def __init__(
         self,
@@ -52,7 +43,6 @@ class HMMRegimeDetector:
         return REGIME_LABELS.get(n, [f"state_{i}" for i in range(n)])
 
     def fit(self, X: np.ndarray) -> "HMMRegimeDetector":
-        """Fit HMM to sequential observation matrix X (n_timesteps, n_features)."""
         self.model = GaussianHMM(
             n_components=self.n_states,
             covariance_type=self.covariance_type,
@@ -70,7 +60,6 @@ class HMMRegimeDetector:
         return self
 
     def decode(self, X: np.ndarray) -> list[HMMState]:
-        """Viterbi decode full sequence, return state per timestep."""
         if not self.fitted or self.model is None:
             raise RuntimeError("HMMRegimeDetector not fitted")
 
@@ -107,7 +96,6 @@ class HMMRegimeDetector:
         return results
 
     def predict_next(self, x: np.ndarray) -> HMMState:
-        """Online: classify single new observation using forward filtering."""
         if not self.fitted or self.model is None:
             raise RuntimeError("HMMRegimeDetector not fitted")
 
@@ -158,14 +146,12 @@ class HMMRegimeDetector:
 
     @property
     def transition_matrix(self) -> np.ndarray:
-        """Return transition matrix in canonical (vol-sorted) order."""
         if not self.fitted or self.model is None:
             raise RuntimeError("HMMRegimeDetector not fitted")
         return self.model.transmat_[np.ix_(self._state_order, self._state_order)]
 
     @property
     def stationary_distribution(self) -> np.ndarray:
-        """Stationary distribution from eigenvector of transition matrix."""
         T = self.transition_matrix
         eigenvalues, eigenvectors = np.linalg.eig(T.T)
         idx = np.argmin(np.abs(eigenvalues - 1.0))
@@ -175,12 +161,10 @@ class HMMRegimeDetector:
         return pi
 
     def regime_persistence(self) -> np.ndarray:
-        """Expected duration in each regime = 1 / (1 - T[i,i])."""
         T = self.transition_matrix
         return 1.0 / (1.0 - np.diag(T) + 1e-10)
 
     def log_likelihood(self, X: np.ndarray) -> float:
-        """Log-likelihood of observation sequence."""
         if not self.fitted or self.model is None:
             raise RuntimeError("HMMRegimeDetector not fitted")
         return float(self.model.score(X))

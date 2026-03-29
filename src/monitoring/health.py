@@ -1,8 +1,3 @@
-"""Health check system — monitors all subsystem liveness.
-
-Each component registers a health check function. The aggregator
-runs all checks and reports overall system health.
-"""
 
 from __future__ import annotations
 
@@ -11,12 +6,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional
 
-
 class HealthStatus(Enum):
     HEALTHY = "HEALTHY"
     DEGRADED = "DEGRADED"
     UNHEALTHY = "UNHEALTHY"
-
 
 @dataclass
 class ComponentHealth:
@@ -25,7 +18,6 @@ class ComponentHealth:
     message: str = ""
     last_check_ns: int = 0
     latency_ms: float = 0.0
-
 
 @dataclass
 class SystemHealth:
@@ -45,27 +37,22 @@ class SystemHealth:
     def degraded_components(self) -> list[ComponentHealth]:
         return [c for c in self.components if c.status == HealthStatus.DEGRADED]
 
-
 # Type for health check callables
 HealthCheckFn = Callable[[], tuple[HealthStatus, str]]
 
-
 class HealthChecker:
-    """Aggregates health checks from all subsystems."""
 
     def __init__(self):
         self._checks: dict[str, HealthCheckFn] = {}
         self._history: list[SystemHealth] = []
 
     def register(self, name: str, check_fn: HealthCheckFn):
-        """Register a health check for a named component."""
         self._checks[name] = check_fn
 
     def unregister(self, name: str):
         self._checks.pop(name, None)
 
     def check(self) -> SystemHealth:
-        """Run all health checks and return aggregated status."""
         components: list[ComponentHealth] = []
         now = time.time_ns()
 

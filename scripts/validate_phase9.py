@@ -1,4 +1,3 @@
-"""Phase 9 validation gate — Paper trading end-to-end integration."""
 
 from __future__ import annotations
 
@@ -12,12 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 results: list[tuple[str, bool, str]] = []
 
-
 def gate(name: str, passed: bool, detail: str = ""):
     tag = "PASS" if passed else "FAIL"
     results.append((name, passed, detail))
     print(f"  [{tag}] {name}" + (f" — {detail}" if detail else ""))
-
 
 from src.paper.engine import (
     PaperConfig, PaperTick, PaperTradingEngine,
@@ -27,10 +24,8 @@ from src.paper.engine import (
 from src.execution.kill_switch import KillLevel
 from src.execution.broker import BrokerOrder
 
-
 def make_tick(sid, price, vol=1000):
     return PaperTick(symbol_id=sid, price=price, volume=vol, timestamp_ns=time.time_ns())
-
 
 def gen_mean_revert(sid, n=300, center=100.0):
     rng = np.random.default_rng(42)
@@ -40,7 +35,6 @@ def gen_mean_revert(sid, n=300, center=100.0):
         price = center + (price - center) * 0.95 + rng.normal(0, 0.5)
         ticks.append(make_tick(sid, max(price, 1.0), 1000))
     return ticks
-
 
 # ── 1. End-to-end session runs ─────────────────────────────────
 
@@ -52,13 +46,11 @@ gate("e2e_session_runs",
      stats.ticks_processed == 300 and stats.final_nav > 0,
      f"ticks={stats.ticks_processed}, nav={stats.final_nav:.0f}")
 
-
 # ── 2. Orders flow through pipeline ───────────────────────────
 
 gate("orders_generated",
      stats.orders_submitted > 0 and stats.orders_filled > 0,
      f"submitted={stats.orders_submitted}, filled={stats.orders_filled}")
-
 
 # ── 3. WAL durability — all orders logged ─────────────────────
 
@@ -73,7 +65,6 @@ all_valid = all(
 gate("wal_all_orders_logged",
      wal_has_entries and all_valid,
      f"wal_entries={wal_count}, all_valid={all_valid}")
-
 
 # ── 4. Kill switch halts trading ──────────────────────────────
 
@@ -92,7 +83,6 @@ gate("kill_switch_halts_trading",
      blocked,
      f"kill_active={blocked}, level={engine2.kill_switch.level.name}")
 
-
 # ── 5. Risk checks block oversized orders ─────────────────────
 
 engine3 = PaperTradingEngine()
@@ -104,7 +94,6 @@ risk_blocked = order.state.value == "REJECTED" and risk is not None and not risk
 gate("risk_blocks_oversized",
      risk_blocked,
      f"state={order.state.value}, reason={risk.reason.value if risk else 'N/A'}")
-
 
 # ── 6. Monitoring active ─────────────────────────────────────
 
@@ -118,7 +107,6 @@ gate("monitoring_active",
      healthy and has_metrics and metrics_updated,
      f"health={health['status']}, prometheus={len(snap)}B, ticks_metric={engine.metrics.ticks_processed._value.get()}")
 
-
 # ── 7. Infrastructure Sharpe ─────────────────────────────────
 
 # Use controlled returns to ensure positive Sharpe (simulating successful paper trading)
@@ -130,7 +118,6 @@ gate("infrastructure_sharpe",
      infra["infrastructure_sharpe"] >= 0.80 and infra["passed"],
      f"paper={infra['paper_sharpe']:.2f}, bt={infra['backtest_sharpe']:.2f}, "
      f"ratio={infra['infrastructure_sharpe']:.2f}, passed={infra['passed']}")
-
 
 # ── 8. Disaster recovery drills ──────────────────────────────
 
@@ -162,7 +149,6 @@ gate("all_drills_completed",
      all_drills_pass,
      f"d1={d1.passed}, d2={d2.passed}, d3={d3.passed}")
 
-
 # ── 9. Latency calibration ──────────────────────────────────
 
 rng = np.random.default_rng(42)
@@ -173,7 +159,6 @@ gate("latency_calibration",
      cal.status in ("PASS", "WARN") and cal.p50_actual_ns > 0,
      f"p50={cal.p50_actual_ns:.0f}ns, p99={cal.p99_actual_ns:.0f}ns, "
      f"ratio={cal.ratio:.2f}, status={cal.status}")
-
 
 # ── 10. Capital deployment stages ────────────────────────────
 
@@ -197,7 +182,6 @@ gate("capital_deployment_stages",
      stage1_ok and stage2_ok and blocked_ok,
      f"stage1={stage1_ok}, stage2={stage2_ok}, blocked={blocked_ok}, "
      f"current={cdm.current_stage.name}, capital={cdm.current_capital:,.0f}")
-
 
 # ── 11. Cross-phase integrity (absolute_integrity_final) ────
 
@@ -254,7 +238,6 @@ gate("absolute_integrity_final",
      all_integrity,
      f"checks={len(integrity_checks)}, passed={sum(integrity_checks.values())}, "
      f"failed={failed if failed else 'none'}")
-
 
 # ── Summary ─────────────────────────────────────────────────────
 

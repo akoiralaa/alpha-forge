@@ -1,10 +1,3 @@
-"""Data quality pipeline — every data point passes through this gate before storage.
-
-Implements all 8 rejection rules from the build protocol. Rejected records are stored
-separately with rejection reason. Nothing is silently dropped.
-
-Rejection rate is monitored per symbol per session. Alert if rate exceeds 0.1%.
-"""
 
 from __future__ import annotations
 
@@ -19,7 +12,6 @@ from src.data.ingest.base import Tick
 
 logger = logging.getLogger(__name__)
 
-
 class RejectionReason(enum.Enum):
     NEGATIVE_PRICE = "last_price <= 0"
     NEGATIVE_BID = "bid <= 0"
@@ -31,10 +23,8 @@ class RejectionReason(enum.Enum):
     FAT_FINGER_VOLUME = "volume > 100x rolling average"
     NON_MONOTONIC_TIME = "capture_time_ns not monotonically increasing"
 
-
 @dataclass
 class QualityStats:
-    """Per-symbol quality statistics for a session."""
     symbol_id: int
     total_received: int = 0
     total_rejected: int = 0
@@ -50,21 +40,13 @@ class QualityStats:
     def exceeds_alert_threshold(self) -> bool:
         return self.rejection_rate > 0.001  # 0.1%
 
-
 @dataclass
 class QualityResult:
-    """Result of running a tick through the quality pipeline."""
     tick: Tick
     accepted: bool
     rejection_reasons: list[RejectionReason] = field(default_factory=list)
 
-
 class DataQualityPipeline:
-    """Stateful quality pipeline with rolling statistics per symbol.
-
-    Maintains rolling mean/std for price and rolling average for volume
-    per symbol to detect fat-finger trades and volume spikes.
-    """
 
     def __init__(
         self,
@@ -99,11 +81,6 @@ class DataQualityPipeline:
         return sum(buf) / len(buf)
 
     def check_tick(self, tick: Tick) -> QualityResult:
-        """Run all quality checks on a single tick.
-
-        Returns a QualityResult indicating acceptance or rejection with reasons.
-        All checks are run even if early ones fail — we want the full rejection profile.
-        """
         reasons: list[RejectionReason] = []
         stats = self._get_stats(tick.symbol_id)
         stats.total_received += 1
@@ -193,7 +170,6 @@ class DataQualityPipeline:
         return QualityResult(tick=tick, accepted=accepted, rejection_reasons=reasons)
 
     def check_batch(self, ticks: list[Tick]) -> tuple[list[Tick], list[tuple[Tick, list[str]]]]:
-        """Check a batch of ticks. Returns (accepted_ticks, rejected_with_reasons)."""
         accepted = []
         rejected = []
         for tick in ticks:
@@ -207,11 +183,6 @@ class DataQualityPipeline:
         return accepted, rejected
 
     def check_dataframe(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """Check a DataFrame of tick records.
-
-        Returns (accepted_df, rejected_df).
-        rejected_df has an extra 'rejection_reason' column (semicolon-separated).
-        """
         accepted_mask = np.ones(len(df), dtype=bool)
         rejection_reasons = [""] * len(df)
 
@@ -242,13 +213,11 @@ class DataQualityPipeline:
         return accepted_df, rejected_df
 
     def get_stats(self, symbol_id: int | None = None) -> QualityStats | dict[int, QualityStats]:
-        """Get quality statistics for a symbol or all symbols."""
         if symbol_id is not None:
             return self._get_stats(symbol_id)
         return dict(self._stats)
 
     def reset(self) -> None:
-        """Reset all rolling state and statistics."""
         self._price_buffer.clear()
         self._volume_buffer.clear()
         self._last_capture_time.clear()

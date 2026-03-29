@@ -1,4 +1,3 @@
-"""Phase 8 tests — Metrics, health checks, alerting."""
 
 from __future__ import annotations
 
@@ -18,7 +17,6 @@ from src.monitoring.alerting import (
     AlertSeverity,
     default_trading_rules,
 )
-
 
 # ── Metrics Tests ───────────────────────────────────────────────
 
@@ -79,7 +77,6 @@ class TestMetrics:
         m.data_gaps.inc()
         assert m.ticks_processed._value.get() == 1000
         assert m.data_gaps._value.get() == 1
-
 
 # ── Health Check Tests ──────────────────────────────────────────
 
@@ -142,7 +139,6 @@ class TestHealthChecker:
         result = hc.check()
         assert result.is_healthy
         assert len(result.components) == 0
-
 
 # ── Alerting Tests ──────────────────────────────────────────────
 

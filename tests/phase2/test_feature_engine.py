@@ -1,4 +1,3 @@
-"""Phase 2 Python tests for the C++ Feature Engine."""
 
 from __future__ import annotations
 
@@ -20,7 +19,6 @@ from engine import (
     WelfordAccumulator,
 )
 from tests.phase2.conftest import make_tick
-
 
 # ── CircularBuffer tests ─────────────────────────────────────
 
@@ -47,7 +45,6 @@ class TestCircularBuffer:
         buf.push(1.0)
         buf.clear()
         assert buf.empty()
-
 
 # ── WelfordAccumulator tests ─────────────────────────────────
 
@@ -78,7 +75,6 @@ class TestWelford:
         w = WelfordAccumulator(0)
         assert math.isnan(w.mean())
         assert math.isnan(w.variance())
-
 
 # ── FeatureEngine tests ──────────────────────────────────────
 
@@ -142,7 +138,6 @@ class TestFeatureEngine:
         assert msv.ofi > 0.0
 
     def test_deterministic(self, default_config):
-        """Same input → same output. Zero logic drift."""
         e1 = FeatureEngine(default_config)
         e2 = FeatureEngine(default_config)
         for i in range(100):
@@ -176,7 +171,6 @@ class TestFeatureEngine:
         assert msv.volume_ratio_20 > 2.0
 
     def test_msv_fields_accessible(self, engine):
-        """All MSV fields are readable from Python."""
         for i in range(15):
             engine.on_tick(make_tick(ts_ns=i * 10**9, price=100.0 + i * 0.1))
         msv = engine.on_tick(make_tick(ts_ns=15 * 10**9, price=101.5))

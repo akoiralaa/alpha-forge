@@ -1,4 +1,3 @@
-"""Data ingestion providers: Interactive Brokers (primary), Polygon.io (supplementary)."""
 
 from src.data.ingest.base import DataProvider, Tick
 from src.data.ingest.ibkr import IBKRProvider

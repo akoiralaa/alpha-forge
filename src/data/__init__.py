@@ -1,4 +1,3 @@
-"""Phase 1: Data Layer — ArcticDB tick store, symbol master, quality pipeline, universe management."""
 
 from src.data.arctic_store import TickStore
 from src.data.symbol_master import SymbolMaster

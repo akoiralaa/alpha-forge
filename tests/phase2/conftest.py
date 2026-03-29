@@ -1,4 +1,3 @@
-"""Phase 2 test fixtures — C++ Feature Engine."""
 
 from __future__ import annotations
 
@@ -21,18 +20,15 @@ from engine import (
     CircularBufferDouble,
 )
 
-
 @pytest.fixture
 def default_config():
     cfg = FeatureEngineConfig()
     cfg.warmup_ticks = 10
     return cfg
 
-
 @pytest.fixture
 def engine(default_config):
     return FeatureEngine(default_config)
-
 
 def make_tick(
     symbol_id: int = 1,

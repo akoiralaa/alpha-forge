@@ -1,4 +1,3 @@
-"""Hierarchical Risk Parity (HRP) portfolio allocation."""
 
 from __future__ import annotations
 
@@ -7,9 +6,7 @@ import pandas as pd
 import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import squareform
 
-
 def _get_quasi_diag(link: np.ndarray) -> list[int]:
-    """Quasi-diagonalization: sort leaves so correlated assets are adjacent."""
     link = link.astype(int, copy=False)
     sort_ix = pd.Series([link[-1, 0], link[-1, 1]])
     num_items = link[-1, 3]
@@ -27,12 +24,10 @@ def _get_quasi_diag(link: np.ndarray) -> list[int]:
 
     return sort_ix.tolist()
 
-
 def _recursive_bisect(
     cov: pd.DataFrame,
     sort_ix: list[int],
 ) -> pd.Series:
-    """Recursive bisection for weight allocation."""
     weights = pd.Series(1.0, index=sort_ix)
     cluster_items = [sort_ix]
 
@@ -64,25 +59,14 @@ def _recursive_bisect(
 
     return weights
 
-
 def _cluster_var(cov: pd.DataFrame) -> float:
-    """Compute variance of an equal-weight portfolio within a cluster."""
     n = len(cov)
     if n == 0:
         return 0.0
     w = np.ones(n) / n
     return float(w @ cov.values @ w)
 
-
 def hrp_weights(returns: pd.DataFrame) -> pd.Series:
-    """Compute HRP portfolio weights.
-
-    Args:
-        returns: DataFrame where columns are asset IDs, rows are daily returns.
-
-    Returns:
-        Normalized weight Series (sums to 1.0).
-    """
     if returns.shape[1] == 1:
         return pd.Series([1.0], index=returns.columns)
 

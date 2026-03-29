@@ -1,15 +1,3 @@
-"""Price adjustment engine — backward-adjusted splits and dividends.
-
-All price histories are adjusted for corporate actions before use in any feature
-calculation. Adjustment is applied at ingest time, not at query time.
-Both raw and adjusted series are stored.
-
-The adjustment uses the backward-adjusted method:
-    adjusted_price_t = raw_price_t * product(split_ratio_i for all splits after t)
-
-This ensures that the most recent prices are unchanged and historical prices
-are adjusted downward, maintaining continuity for feature calculations.
-"""
 
 from __future__ import annotations
 
@@ -22,13 +10,7 @@ from src.data.symbol_master import SymbolMaster
 
 logger = logging.getLogger(__name__)
 
-
 class PriceAdjuster:
-    """Computes backward-adjusted prices using data from the symbol master.
-
-    For each instrument, retrieves all splits and dividends from the symbol master
-    and applies cumulative adjustment factors to historical prices.
-    """
 
     def __init__(self, symbol_master: SymbolMaster):
         self._sm = symbol_master
@@ -38,20 +20,6 @@ class PriceAdjuster:
         canonical_id: int,
         timestamps_ns: np.ndarray,
     ) -> np.ndarray:
-        """Compute the cumulative adjustment factor for each timestamp.
-
-        For each timestamp t, the factor is:
-            factor_t = product(split_ratio for all splits with effective_date > t)
-
-        Multiply raw price by this factor to get the adjusted price.
-
-        Args:
-            canonical_id: Instrument canonical_id from symbol master.
-            timestamps_ns: Array of nanosecond timestamps (int64), must be sorted ascending.
-
-        Returns:
-            Array of adjustment factors, same length as timestamps_ns.
-        """
         splits = self._sm.get_splits(canonical_id)
         dividends = self._sm.get_dividends(canonical_id)
 
@@ -85,19 +53,6 @@ class PriceAdjuster:
         df: pd.DataFrame,
         price_columns: list[str] | None = None,
     ) -> pd.DataFrame:
-        """Apply backward-adjusted split and dividend adjustments to a tick/bar DataFrame.
-
-        Args:
-            canonical_id: Instrument canonical_id.
-            df: DataFrame with at least 'capture_time_ns' and price columns.
-                Must be sorted by capture_time_ns ascending.
-            price_columns: Which columns to adjust. Defaults to
-                          ['bid', 'ask', 'last_price'] for ticks,
-                          ['open', 'high', 'low', 'close'] for bars.
-
-        Returns:
-            New DataFrame with adjusted prices. The original is not modified.
-        """
         if df.empty:
             return df.copy()
 
@@ -144,13 +99,6 @@ class PriceAdjuster:
         df_adjusted: pd.DataFrame,
         tolerance_pct: float = 0.01,
     ) -> bool:
-        """Verify that a split adjustment was applied correctly.
-
-        At a split boundary, the adjusted price on the day before the split should
-        equal the adjusted price on the day after the split (within tolerance).
-
-        Returns True if all split boundaries are correct.
-        """
         splits = self._sm.get_splits(canonical_id)
         if not splits:
             return True

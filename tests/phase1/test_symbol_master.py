@@ -1,10 +1,8 @@
-"""Tests for the symbol master."""
 
 import pytest
 
 from src.data.ingest.base import AssetClass, date_to_ns
 from src.data.symbol_master import SymbolMaster
-
 
 class TestSymbolMaster:
     def test_add_and_get_instrument(self, symbol_master: SymbolMaster):

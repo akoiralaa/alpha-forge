@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""Phase 4 Validation Gate — Signal Models.
-
-Assertions:
-1. tier1_sign_correctness: Correct sign for constructed MSVs
-2. oos_sharpe_positive: Tier 2/3 models have positive OOS Sharpe in 2/3 windows
-3. permutation_test_all_signals: Real Sharpe > permutation p95
-4. stationarity_all_features: ADF test p < 0.05 for all features
-5. decay_sensitivity: Half-life measurement (informational, always PASS)
-6. combiner_down_weights_zero_sharpe: Zero-Sharpe signals get weight 0
-"""
 
 from __future__ import annotations
 
@@ -39,7 +29,6 @@ from src.signals.tier3 import LightGBMSignal, RandomForestSignal
 from src.signals.combiner import SignalCombiner
 from src.signals.base import UNIVERSAL_FEATURES, measure_half_life
 
-
 def make_msv(**kwargs):
     defaults = dict(
         symbol_id=1, timestamp_ns=0, valid=True,
@@ -53,7 +42,6 @@ def make_msv(**kwargs):
     )
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
-
 
 class ValidationReport:
     def __init__(self, phase: int):
@@ -93,16 +81,13 @@ class ValidationReport:
         print(f"\nReport saved: {path}")
         return all_pass
 
-
 def generate_data(n=3000, n_features=19, seed=42):
-    """Generate features with signal content and forward returns."""
     rng = np.random.default_rng(seed)
     X = rng.standard_normal((n, n_features))
     # Inject real signal: features 0-2 predict returns
     y = (0.01 * X[:, 0] + 0.005 * X[:, 1] - 0.003 * X[:, 2]
          + 0.02 * rng.standard_normal(n))
     return X, y
-
 
 report = ValidationReport(phase=4)
 print("Phase 4 Validation Gate — Signal Models")

@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""Phase 3 Validation Gate — Deterministic Backtester.
-
-Assertions:
-1. lookahead_impossible: Perfect-lookahead signal gets Sharpe < 0.1
-2. latency_injection_active: Higher latency → lower Sharpe
-3. cost_model_active: Costs reduce Sharpe by > 10%
-4. walk_forward_embargo: Embargo >= max feature lookback
-5. lock_box_virgin: access_count == 0
-6. stress_test_survival: All stress scenarios within drawdown limit
-7. monte_carlo_permutation: Real strategy Sharpe > p95 of random signals
-"""
 
 from __future__ import annotations
 
@@ -45,7 +34,6 @@ from src.backtester.walk_forward import (
     walk_forward,
 )
 
-
 # ── Helpers ──────────────────────────────────────────────────
 
 def make_tick(sym, ts_ns, price, size=100, spread=0.02):
@@ -61,7 +49,6 @@ def make_tick(sym, ts_ns, price, size=100, spread=0.02):
     t.last_size = size
     return t
 
-
 def generate_ticks(n=2000, seed=42, drift=0.0, vol=0.001):
     rng = np.random.default_rng(seed)
     prices = [100.0]
@@ -71,7 +58,6 @@ def generate_ticks(n=2000, seed=42, drift=0.0, vol=0.001):
     for i, p in enumerate(prices):
         ticks.append(make_tick(1, i * 1_000_000_000, p, 100 + int(rng.integers(0, 500))))
     return ticks, prices
-
 
 class ValidationReport:
     def __init__(self, phase: int):
@@ -111,12 +97,10 @@ class ValidationReport:
         print(f"\nReport saved: {path}")
         return all_pass
 
-
 def make_engine(warmup=50):
     cfg = FeatureEngineConfig()
     cfg.warmup_ticks = warmup
     return FeatureEngine(cfg)
-
 
 report = ValidationReport(phase=3)
 print("Phase 3 Validation Gate — Deterministic Backtester")
@@ -180,7 +164,6 @@ ticks_lat, _ = generate_ticks(n=5000, seed=99, drift=0.0, vol=0.005)
 
 trade_count = [0]
 def aggressive_signal(msv, positions):
-    """Trade every time we have a valid MSV with some return signal."""
     if not msv.valid or math.isnan(msv.ret_1s):
         return None
     # Always trade to ensure fills happen

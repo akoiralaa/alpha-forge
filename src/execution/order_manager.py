@@ -1,8 +1,3 @@
-"""Order manager — lifecycle management with WAL-first durability.
-
-Every state transition is logged to the WAL before the broker action.
-Supports pre-trade risk checks, kill switch gating, and fill tracking.
-"""
 
 from __future__ import annotations
 
@@ -16,10 +11,8 @@ from src.execution.kill_switch import KillSwitch
 from src.execution.wal import OrderState, WALEntry, WriteAheadLog
 from src.portfolio.risk import OrderIntent, Portfolio, PreTradeRiskCheck, RiskCheckResult
 
-
 @dataclass
 class ManagedOrder:
-    """Internal order tracking state."""
     order_id: str
     symbol_id: int
     side: int
@@ -34,9 +27,7 @@ class ManagedOrder:
     created_ns: int = 0
     updated_ns: int = 0
 
-
 class OrderManager:
-    """Manages the full order lifecycle with WAL durability."""
 
     def __init__(
         self,
@@ -63,10 +54,6 @@ class OrderManager:
         current_price: float = 100.0,
         adv_20d: float = 1_000_000.0,
     ) -> tuple[ManagedOrder, Optional[RiskCheckResult]]:
-        """Submit a new order through risk checks, WAL, and broker.
-
-        Returns (order, risk_result). If risk check fails, order state is REJECTED.
-        """
         order_id = f"ORD-{uuid.uuid4().hex[:12]}"
         now = time.time_ns()
 
@@ -138,7 +125,6 @@ class OrderManager:
         return managed, risk_result
 
     def on_fill(self, fill: BrokerFill):
-        """Process a fill from the broker."""
         order = self._orders.get(fill.order_id)
         if order is None:
             return
@@ -156,7 +142,6 @@ class OrderManager:
         self._log_state(order)
 
     def cancel(self, order_id: str) -> bool:
-        """Cancel an order."""
         order = self._orders.get(order_id)
         if order is None or order.state in (
             OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED
@@ -186,7 +171,6 @@ class OrderManager:
         return [o for o in self._orders.values() if o.state == OrderState.FILLED]
 
     def _log_state(self, order: ManagedOrder):
-        """Write current order state to WAL."""
         entry = WALEntry(
             sequence_id=0,
             timestamp_ns=order.updated_ns or time.time_ns(),

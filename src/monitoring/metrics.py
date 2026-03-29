@@ -1,8 +1,3 @@
-"""Prometheus metrics for the trading system.
-
-All metrics are registered on an isolated CollectorRegistry so tests
-don't collide with the global default registry.
-"""
 
 from __future__ import annotations
 
@@ -15,9 +10,7 @@ from prometheus_client import (
     generate_latest,
 )
 
-
 class TradingMetrics:
-    """Central metrics hub — one instance per process."""
 
     def __init__(self, registry: CollectorRegistry | None = None):
         self.registry = registry or CollectorRegistry()
@@ -270,5 +263,4 @@ class TradingMetrics:
         )
 
     def snapshot(self) -> bytes:
-        """Generate Prometheus exposition format."""
         return generate_latest(self.registry)

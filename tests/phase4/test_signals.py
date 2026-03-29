@@ -1,4 +1,3 @@
-"""Phase 4 tests — Signal models."""
 
 from __future__ import annotations
 
@@ -29,7 +28,6 @@ from src.signals.tier3 import LightGBMSignal, MLPSignal, RandomForestSignal
 from src.signals.combiner import SignalCombiner, lead_lag_impulse
 from src.signals.base import measure_half_life, msv_to_features
 from tests.phase4.conftest import generate_features_and_returns, make_msv
-
 
 # ── Tier 1 ───────────────────────────────────────────────────
 
@@ -89,7 +87,6 @@ class TestTier1:
         msv = make_msv(zscore_20=float("nan"))
         assert signal_mean_reversion(msv) == 0.0
 
-
 # ── Tier 2 ───────────────────────────────────────────────────
 
 class TestTier2:
@@ -148,7 +145,6 @@ class TestTier2:
         proba = m.predict_proba(X[:10])
         assert np.all(proba >= 0) and np.all(proba <= 1)
 
-
 # ── Tier 3 ───────────────────────────────────────────────────
 
 class TestTier3:
@@ -173,7 +169,6 @@ class TestTier3:
         m.fit(X, y)
         preds = m.predict(X[:10])
         assert len(preds) == 10
-
 
 # ── Combiner ─────────────────────────────────────────────────
 
@@ -219,7 +214,6 @@ class TestCombiner:
         msv = make_msv(valid=False)
         assert combiner.combine(msv) == 0.0
 
-
 # ── Lead-lag ─────────────────────────────────────────────────
 
 class TestLeadLag:
@@ -236,7 +230,6 @@ class TestLeadLag:
         imp2 = lead_lag_impulse(2.0, 100.0, 10.0)
         assert imp1 > imp2
 
-
 # ── Half-life ────────────────────────────────────────────────
 
 class TestHalfLife:
@@ -247,7 +240,6 @@ class TestHalfLife:
         hl = measure_half_life(signal, returns, max_lag=100, step=5)
         assert isinstance(hl, float)
         assert hl > 0
-
 
 # ── Feature extraction ───────────────────────────────────────
 

@@ -1,4 +1,3 @@
-"""Pre-trade risk checks, circuit breakers, and correlation cluster monitoring."""
 
 from __future__ import annotations
 
@@ -8,7 +7,6 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-
 
 class RiskCheckReason(Enum):
     PASS = "PASS"
@@ -24,17 +22,14 @@ class RiskCheckReason(Enum):
     FAT_FINGER_PRICE = "FAT_FINGER_PRICE"
     STALE_DATA = "STALE_DATA"
 
-
 @dataclass
 class RiskCheckResult:
     passed: bool
     reason: RiskCheckReason = RiskCheckReason.PASS
     detail: str = ""
 
-
 @dataclass
 class Portfolio:
-    """Portfolio state for risk checks."""
     nav: float = 1_000_000.0
     peak_nav: float = 1_000_000.0
     positions: Dict[int, float] = field(default_factory=dict)  # symbol_id -> dollar exposure
@@ -68,10 +63,8 @@ class Portfolio:
         self.nav = new_nav
         self.peak_nav = max(self.peak_nav, new_nav)
 
-
 @dataclass
 class OrderIntent:
-    """Simplified order intent for risk checks."""
     symbol_id: int
     side: int  # +1 buy, -1 sell
     size: int
@@ -81,9 +74,7 @@ class OrderIntent:
     adv_20d: float = 1_000_000.0
     current_price: float = 100.0
 
-
 class PreTradeRiskCheck:
-    """All pre-trade risk limits. Any FAIL blocks the order."""
 
     def __init__(
         self,
@@ -112,7 +103,6 @@ class PreTradeRiskCheck:
         self.stale_data_ms = stale_data_ms
 
     def check(self, order: OrderIntent, portfolio: Portfolio) -> RiskCheckResult:
-        """Run all pre-trade checks. Returns first failure or PASS."""
 
         # Drawdown circuit breaker — Level 2 blocks everything
         if portfolio.drawdown_pct >= self.drawdown_level2_pct:
@@ -180,7 +170,6 @@ class PreTradeRiskCheck:
 
         return RiskCheckResult(True)
 
-
 # ── Correlation cluster monitor ──────────────────────────────
 
 @dataclass
@@ -190,7 +179,6 @@ class ClusterViolation:
     max_allowed: float
     excess: float
 
-
 def cluster_exposure_check(
     positions: Dict[int, float],
     corr_matrix: pd.DataFrame,
@@ -198,7 +186,6 @@ def cluster_exposure_check(
     cluster_threshold: float = 0.70,
     max_cluster_exposure_pct: float = 0.25,
 ) -> List[ClusterViolation]:
-    """Find clusters of correlated assets exceeding exposure limits."""
     symbols = list(positions.keys())
     if len(symbols) < 2:
         return []

@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""Phase 1 Validation Gate — all 7 assertions from the build protocol.
-
-Produces a validation report in the exact format specified by the protocol.
-Gate passes ONLY if all assertions are PASS. On ANY_FAIL, Phase 2 is LOCKED.
-
-Usage:
-    python scripts/validate_phase1.py [--data-dir DATA_DIR]
-"""
 
 from __future__ import annotations
 
@@ -28,7 +20,6 @@ from src.data.quality_pipeline import DataQualityPipeline
 from src.data.symbol_master import SymbolMaster
 from src.data.universe import UniverseManager
 
-
 @dataclass
 class AssertionResult:
     name: str
@@ -36,7 +27,6 @@ class AssertionResult:
     target: str
     result: str  # "PASS" or "FAIL"
     notes: str = ""
-
 
 @dataclass
 class ValidationReport:
@@ -106,7 +96,6 @@ class ValidationReport:
 
         return "\n".join(lines)
 
-
 def get_git_sha() -> str:
     try:
         result = subprocess.run(
@@ -117,9 +106,7 @@ def get_git_sha() -> str:
     except Exception:
         return "NO_GIT_REPO"
 
-
 def assert_survivorship_bias(sm: SymbolMaster) -> AssertionResult:
-    """Query universe as-of 2010-01-01. Count instruments delisted before 2023-01-01."""
     existed_at = date_to_ns(2010, 1, 1)
     delisted_before = date_to_ns(2023, 1, 1)
     delisted = sm.get_delisted_instruments(existed_at, delisted_before)
@@ -133,9 +120,7 @@ def assert_survivorship_bias(sm: SymbolMaster) -> AssertionResult:
         notes="Instruments that existed in 2010 but were later delisted must be present",
     )
 
-
 def assert_dual_timestamp_coverage(ts: TickStore) -> AssertionResult:
-    """Select 10,000 random records. 100% must have both timestamps != 0."""
     sample = ts.sample_random_records(n=10_000)
     if sample.empty:
         return AssertionResult(
@@ -160,9 +145,7 @@ def assert_dual_timestamp_coverage(ts: TickStore) -> AssertionResult:
         result="PASS" if valid_count == total else "FAIL",
     )
 
-
 def assert_capture_time_ordering(ts: TickStore) -> AssertionResult:
-    """For each symbol, select 1,000 sequential records. capture_time_ns must be monotonic."""
     symbols = ts.list_symbols()
     if not symbols:
         return AssertionResult(
@@ -202,9 +185,7 @@ def assert_capture_time_ordering(ts: TickStore) -> AssertionResult:
         result="PASS",
     )
 
-
 def assert_pit_fundamental_integrity(fund: FundamentalsStore) -> AssertionResult:
-    """Query EPS for a symbol as-of 2019-06-01. published_at_ns must be <= 2019-06-01."""
     as_of = date_to_ns(2019, 6, 1)
 
     # Find any symbol with EPS data
@@ -240,11 +221,9 @@ def assert_pit_fundamental_integrity(fund: FundamentalsStore) -> AssertionResult
         notes=f"Symbol {test_id}, value={record.value}",
     )
 
-
 def assert_split_adjustment_correctness(
     sm: SymbolMaster, ts: TickStore
 ) -> AssertionResult:
-    """Find a stock with a known 2:1 split. Adjusted prices should be continuous."""
     from src.data.adjustments import PriceAdjuster
 
     # Find any symbol with a split
@@ -282,9 +261,7 @@ def assert_split_adjustment_correctness(
         notes=f"Tested symbol {test_id}",
     )
 
-
 def assert_quality_pipeline_rejection() -> AssertionResult:
-    """Inject 100 synthetic bad records. 100% must be rejected."""
     pipeline = DataQualityPipeline()
 
     # First, feed some good ticks to build rolling state
@@ -364,11 +341,9 @@ def assert_quality_pipeline_rejection() -> AssertionResult:
         notes="Tested: zero price, crossed book, time travel, negative bid, stale data",
     )
 
-
 def assert_universe_point_in_time(
     sm: SymbolMaster, fund: FundamentalsStore, ts: TickStore
 ) -> AssertionResult:
-    """Build universe as-of 2015-01-01 and as-of today. They must differ."""
     um = UniverseManager(sm, fund, ts)
 
     date_2015 = date_to_ns(2015, 1, 1)
@@ -390,9 +365,7 @@ def assert_universe_point_in_time(
         if not differ else "",
     )
 
-
 def run_validation(data_dir: str) -> ValidationReport:
-    """Run all Phase 1 validation assertions."""
     data_path = Path(data_dir).expanduser().resolve()
 
     ts = TickStore(data_path / "arcticdb")
@@ -419,7 +392,6 @@ def run_validation(data_dir: str) -> ValidationReport:
 
     return report
 
-
 def main():
     parser = argparse.ArgumentParser(description="Phase 1 Validation Gate")
     parser.add_argument(
@@ -443,7 +415,6 @@ def main():
     print(f"\nReport archived to: {report_path}")
 
     sys.exit(0 if report.gate_result == "ALL_PASS" else 1)
-
 
 if __name__ == "__main__":
     main()

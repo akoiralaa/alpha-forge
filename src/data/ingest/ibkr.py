@@ -1,14 +1,3 @@
-"""Interactive Brokers data provider — primary data + broker for all asset classes.
-
-Uses ib_insync for TWS API connectivity. Provides:
-- Historical bars (daily/minute) for all asset classes
-- Historical ticks (when available, ~1 year depth)
-- Live tick streaming
-- Instrument metadata and corporate actions
-- Paper trading account (free, no minimum)
-
-The same IB connection is used for data in Phase 1 and execution in Phase 7+.
-"""
 
 from __future__ import annotations
 
@@ -33,21 +22,13 @@ logger = logging.getLogger(__name__)
 # Seconds between API calls to respect IB rate limits
 IB_RATE_LIMIT_SLEEP = 0.5
 
-
 def _ns_to_datetime(ns: int) -> datetime:
     return datetime.fromtimestamp(ns / 1_000_000_000, tz=timezone.utc)
-
 
 def _datetime_to_ns(dt: datetime) -> int:
     return int(dt.timestamp() * 1_000_000_000)
 
-
 class IBKRProvider(DataProvider):
-    """Interactive Brokers data provider via TWS API (ib_insync).
-
-    Requires TWS or IB Gateway running locally or on a specified host.
-    Paper account: no minimum balance, free delayed data for all asset classes.
-    """
 
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
@@ -55,7 +36,6 @@ class IBKRProvider(DataProvider):
         self._contracts_cache: dict[str, object] = {}
 
     def connect(self) -> None:
-        """Connect to TWS/IB Gateway."""
         try:
             from ib_insync import IB
         except ImportError:
@@ -79,7 +59,6 @@ class IBKRProvider(DataProvider):
         logger.info("Disconnected from IB")
 
     def _make_contract(self, symbol: str, asset_class: AssetClass):
-        """Create an IB contract object for the given symbol and asset class."""
         from ib_insync import Contract, Forex, Future, Stock
 
         cache_key = f"{symbol}:{asset_class.value}"
@@ -123,11 +102,6 @@ class IBKRProvider(DataProvider):
         end_ns: int,
         bar_size: str = "1min",
     ) -> pd.DataFrame:
-        """Fetch historical OHLCV bars from IB.
-
-        IB bar sizes: '1 min', '5 mins', '15 mins', '1 hour', '1 day'
-        IB limits: ~1 year of minute data, 10+ years of daily data.
-        """
         contract = self._make_contract(symbol, asset_class)
         if contract is None:
             return pd.DataFrame()
@@ -205,7 +179,6 @@ class IBKRProvider(DataProvider):
         start_ns: int,
         end_ns: int,
     ) -> Iterator[Tick]:
-        """Fetch historical ticks from IB. Limited to ~1 year of history."""
         contract = self._make_contract(symbol, asset_class)
         if contract is None:
             return
@@ -255,11 +228,6 @@ class IBKRProvider(DataProvider):
         symbols: list[str],
         asset_class: AssetClass,
     ) -> Iterator[Tick]:
-        """Subscribe to live tick stream from IB.
-
-        Yields Ticks as they arrive. This is a blocking generator — runs until
-        disconnect() is called.
-        """
         contracts = [self._make_contract(s, asset_class) for s in symbols]
 
         for contract in contracts:
@@ -289,7 +257,6 @@ class IBKRProvider(DataProvider):
                 )
 
     def get_instrument_info(self, symbol: str, asset_class: AssetClass) -> dict:
-        """Get instrument metadata from IB."""
         contract = self._make_contract(symbol, asset_class)
         if contract is None:
             return {}
@@ -321,9 +288,5 @@ class IBKRProvider(DataProvider):
         start_ns: int,
         end_ns: int,
     ) -> list[dict]:
-        """IB doesn't have a direct corporate actions API.
-        Use Polygon or manual data for corporate action history.
-        Returns empty list — supplemented by PolygonProvider.
-        """
         logger.debug("IB does not provide corporate actions API; use PolygonProvider")
         return []

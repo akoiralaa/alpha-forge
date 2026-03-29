@@ -1,4 +1,3 @@
-"""Simulated execution engine with latency injection, market impact, and transaction costs."""
 
 from __future__ import annotations
 
@@ -17,10 +16,8 @@ from src.backtester.types import (
     SimFill,
 )
 
-
 @dataclass
 class LatencyModel:
-    """Log-normal latency distribution. Params in nanoseconds."""
     mu_ns: float = 17.0       # log-space mean (~50ms median)
     sigma_ns: float = 0.5     # log-space std
     min_ns: int = 1_000_000   # 1ms floor
@@ -35,7 +32,6 @@ class LatencyModel:
     @classmethod
     def from_p50_ns(cls, p50_ns: int, sigma: float = 0.5,
                     seed: int = 42) -> LatencyModel:
-        """Create from desired median latency in nanoseconds."""
         if p50_ns <= 0:
             # Zero latency mode
             return cls(mu_ns=0.0, sigma_ns=0.0, min_ns=0,
@@ -50,21 +46,15 @@ class LatencyModel:
             return 0
         return int(math.exp(self.mu_ns))
 
-
 def compute_market_impact_bps(
     order_size: int,
     adv_20d: float,
     realized_vol_daily_bps: float,
     k: float = 0.5,
 ) -> float:
-    """Square-root market impact model.
-
-    impact_bps = k * sqrt(order_size / adv_20d) * realized_vol_daily_bps
-    """
     if adv_20d <= 0:
         return 0.0
     return k * math.sqrt(order_size / adv_20d) * realized_vol_daily_bps
-
 
 def compute_transaction_cost_bps(
     fill: SimFill,
@@ -72,7 +62,6 @@ def compute_transaction_cost_bps(
     spec: InstrumentSpec,
     held_overnight: bool = False,
 ) -> float:
-    """Full transaction cost model: commission + spread + exchange + impact + financing."""
     commission = spec.commission_bps
 
     # Spread cost (half spread per side)
@@ -97,9 +86,7 @@ def compute_transaction_cost_bps(
 
     return commission + spread_cost + exchange_fee + impact + financing
 
-
 class SimulatedExecution:
-    """Simulated execution engine with latency, impact, and costs."""
 
     def __init__(
         self,
@@ -121,7 +108,6 @@ class SimulatedExecution:
         book: BookSnapshot,
         spec: InstrumentSpec,
     ) -> Optional[SimFill]:
-        """Simulate a fill with latency injection, market impact, and costs."""
         # 1. Sample latency
         latency_ns = self.latency.sample()
         fill_time_ns = order.signal_time_ns + latency_ns

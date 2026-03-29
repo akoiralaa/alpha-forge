@@ -1,4 +1,3 @@
-"""Phase 3 tests — Backtester engine, execution, walk-forward."""
 
 from __future__ import annotations
 
@@ -44,7 +43,6 @@ from src.backtester.walk_forward import (
 )
 from tests.phase3.conftest import generate_tick_series, make_tick
 
-
 # ── Position tests ───────────────────────────────────────────
 
 class TestPosition:
@@ -77,7 +75,6 @@ class TestPosition:
         pos.update_mark(110.0)
         assert pos.unrealized_pnl == 100.0
 
-
 # ── Execution tests ──────────────────────────────────────────
 
 class TestMarketImpact:
@@ -89,7 +86,6 @@ class TestMarketImpact:
     def test_zero_adv(self):
         assert compute_market_impact_bps(100, 0, 100.0) == 0.0
 
-
 class TestLatencyModel:
     def test_p50_construction(self):
         lm = LatencyModel.from_p50_ns(50_000_000)  # 50ms
@@ -100,7 +96,6 @@ class TestLatencyModel:
     def test_zero_latency(self):
         lm = LatencyModel.from_p50_ns(0)
         assert lm.sample() == 0
-
 
 class TestSimulatedExecution:
     def test_market_order_fills(self):
@@ -150,7 +145,6 @@ class TestSimulatedExecution:
         fill = exec_.simulate_fill(order, book, spec)
         assert fill is not None
         assert fill.cost_bps > 0
-
 
 # ── Backtester engine tests ──────────────────────────────────
 
@@ -210,7 +204,6 @@ class TestBacktester:
         assert isinstance(result.sharpe, float)
         assert result.max_drawdown <= 0
 
-
 # ── Walk-forward tests ───────────────────────────────────────
 
 class TestWalkForward:
@@ -240,7 +233,6 @@ class TestWalkForward:
             assert r.embargo_range[0] < r.embargo_range[1]
             assert r.test_range[0] >= r.embargo_range[1]
 
-
 # ── Lock box tests ───────────────────────────────────────────
 
 class TestLockBox:
@@ -266,7 +258,6 @@ class TestLockBox:
         assert lb.access_count == 1
         loaded = LockBox.load(path)
         assert loaded.access_count == 1
-
 
 # ── Stress test scenarios ────────────────────────────────────
 

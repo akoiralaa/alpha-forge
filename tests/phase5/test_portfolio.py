@@ -1,4 +1,3 @@
-"""Phase 5 tests — Portfolio, risk, sizing, HRP, attribution."""
 
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ from src.portfolio.risk import (
 )
 from src.portfolio.attribution import TradeAttribution, attribute_trade
 
-
 # ── Sizing ───────────────────────────────────────────────────
 
 class TestSizing:
@@ -47,7 +45,6 @@ class TestSizing:
         # Unconstrained vol-scaled size
         vol_scaled = int(1_000_000 * 0.005 / (100.0 * 0.02))
         assert abs(size_constrained) <= vol_scaled
-
 
 # ── HRP ──────────────────────────────────────────────────────
 
@@ -83,7 +80,6 @@ class TestHRP:
         returns = pd.DataFrame(np.random.randn(50, 1), columns=[0])
         w = hrp_weights(returns)
         assert abs(w[0] - 1.0) < 1e-6
-
 
 # ── Risk checks ──────────────────────────────────────────────
 
@@ -161,7 +157,6 @@ class TestPreTradeRisk:
         assert not result.passed
         assert result.reason == RiskCheckReason.MAX_POSITION
 
-
 # ── Cluster exposure ─────────────────────────────────────────
 
 class TestClusterExposure:
@@ -178,7 +173,6 @@ class TestClusterExposure:
                                             cluster_threshold=0.7,
                                             max_cluster_exposure_pct=0.25)
         assert len(violations) > 0
-
 
 # ── Attribution ──────────────────────────────────────────────
 

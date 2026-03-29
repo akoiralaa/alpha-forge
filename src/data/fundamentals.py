@@ -1,12 +1,3 @@
-"""Point-in-time fundamental data store.
-
-Fundamentals are stored with publication timestamp, not event timestamp.
-Any query for a fundamental value as-of time T returns the most recent record
-where published_at_ns <= T. Never the most recent record overall.
-
-This prevents look-ahead bias: a backtest in June 2019 uses Q1 2019 earnings
-that were released in April 2019, not a restated figure published later.
-"""
 
 from __future__ import annotations
 
@@ -19,10 +10,8 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass(slots=True)
 class FundamentalRecord:
-    """A single point-in-time fundamental data point."""
     canonical_id: int
     metric_name: str        # EPS, FLOAT, SHORT_INTEREST, ANALYST_EST, etc.
     value: float
@@ -30,14 +19,7 @@ class FundamentalRecord:
     period_end_ns: int      # reporting period this value covers
     source: str             # data provider identifier
 
-
 class FundamentalsStore:
-    """SQLite-backed point-in-time fundamental data.
-
-    Designed for strict look-ahead bias prevention. Every query is as-of a
-    specific timestamp and only returns data that was publicly available
-    at that time.
-    """
 
     SCHEMA_SQL = """
     CREATE TABLE IF NOT EXISTS fundamentals_pit (
@@ -85,7 +67,6 @@ class FundamentalsStore:
     # ── Writes ───────────────────────────────────────────────────────────
 
     def add_record(self, record: FundamentalRecord) -> None:
-        """Insert a single fundamental data point."""
         self._conn.execute(
             """INSERT INTO fundamentals_pit
                (canonical_id, metric_name, value, published_at_ns, period_end_ns, source)
@@ -102,7 +83,6 @@ class FundamentalsStore:
         self._conn.commit()
 
     def add_records_batch(self, records: list[FundamentalRecord]) -> None:
-        """Bulk insert fundamental data points."""
         self._conn.executemany(
             """INSERT INTO fundamentals_pit
                (canonical_id, metric_name, value, published_at_ns, period_end_ns, source)
@@ -122,10 +102,6 @@ class FundamentalsStore:
         metric_name: str,
         as_of_ns: int,
     ) -> FundamentalRecord | None:
-        """Get the most recent value for a metric that was publicly known at as_of_ns.
-
-        This is the critical PIT query: returns only data with published_at_ns <= as_of_ns.
-        """
         row = self._conn.execute(
             """SELECT * FROM fundamentals_pit
                WHERE canonical_id = ?
@@ -151,10 +127,6 @@ class FundamentalsStore:
         canonical_id: int,
         as_of_ns: int,
     ) -> dict[str, FundamentalRecord]:
-        """Get the most recent value for ALL metrics for a symbol at as_of_ns.
-
-        Returns dict mapping metric_name -> FundamentalRecord.
-        """
         rows = self._conn.execute(
             """SELECT f1.* FROM fundamentals_pit f1
                INNER JOIN (
@@ -187,7 +159,6 @@ class FundamentalsStore:
         start_ns: int | None = None,
         end_ns: int | None = None,
     ) -> list[FundamentalRecord]:
-        """Get the full publication history of a metric for a symbol."""
         query = """SELECT * FROM fundamentals_pit
                    WHERE canonical_id = ? AND metric_name = ?"""
         params: list = [canonical_id, metric_name]
@@ -217,10 +188,6 @@ class FundamentalsStore:
         canonical_id: int,
         as_of_ns: int,
     ) -> float | None:
-        """Compute earnings surprise Z-score: (actual EPS - estimated EPS) / std.
-
-        Returns None if insufficient data.
-        """
         actual = self.get_as_of(canonical_id, self.METRIC_EPS, as_of_ns)
         estimate = self.get_as_of(canonical_id, self.METRIC_ANALYST_EST_EPS, as_of_ns)
         if actual is None or estimate is None:

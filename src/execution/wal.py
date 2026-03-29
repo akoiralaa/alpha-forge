@@ -1,8 +1,3 @@
-"""Write-Ahead Log for order persistence and crash recovery.
-
-Every order state change is durably logged before being acted on.
-On restart, replay the WAL to reconstruct order state.
-"""
 
 from __future__ import annotations
 
@@ -15,7 +10,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-
 class OrderState(Enum):
     PENDING = "PENDING"
     SUBMITTED = "SUBMITTED"
@@ -25,10 +19,8 @@ class OrderState(Enum):
     REJECTED = "REJECTED"
     ERROR = "ERROR"
 
-
 @dataclass
 class WALEntry:
-    """Single WAL record."""
     sequence_id: int
     timestamp_ns: int
     order_id: str
@@ -44,9 +36,7 @@ class WALEntry:
     error_msg: str = ""
     metadata: str = ""     # JSON blob for extra context
 
-
 class WriteAheadLog:
-    """SQLite-backed WAL for order lifecycle durability."""
 
     def __init__(self, db_path: str | Path = ":memory:"):
         self.db_path = str(db_path)
@@ -85,7 +75,6 @@ class WriteAheadLog:
         return row[0] if row[0] is not None else 0
 
     def append(self, entry: WALEntry) -> int:
-        """Append entry to WAL. Returns sequence_id."""
         entry.sequence_id = self._seq
         entry.timestamp_ns = entry.timestamp_ns or time.time_ns()
         self.conn.execute("""
@@ -106,7 +95,6 @@ class WriteAheadLog:
         return entry.sequence_id
 
     def get_order_history(self, order_id: str) -> list[WALEntry]:
-        """Get all WAL entries for an order, ordered by sequence."""
         rows = self.conn.execute(
             "SELECT * FROM wal_entries WHERE order_id = ? ORDER BY sequence_id",
             (order_id,),
@@ -114,7 +102,6 @@ class WriteAheadLog:
         return [self._row_to_entry(r) for r in rows]
 
     def get_latest_state(self, order_id: str) -> Optional[WALEntry]:
-        """Get the most recent WAL entry for an order."""
         row = self.conn.execute(
             "SELECT * FROM wal_entries WHERE order_id = ? ORDER BY sequence_id DESC LIMIT 1",
             (order_id,),
@@ -122,7 +109,6 @@ class WriteAheadLog:
         return self._row_to_entry(row) if row else None
 
     def get_open_orders(self) -> list[WALEntry]:
-        """Get latest state of all orders that are not terminal."""
         terminal = ("FILLED", "CANCELLED", "REJECTED", "ERROR")
         placeholders = ",".join("?" for _ in terminal)
         rows = self.conn.execute(f"""
@@ -136,7 +122,6 @@ class WriteAheadLog:
         return [self._row_to_entry(r) for r in rows]
 
     def replay(self) -> dict[str, WALEntry]:
-        """Replay entire WAL, return latest state per order_id."""
         rows = self.conn.execute(
             "SELECT * FROM wal_entries ORDER BY sequence_id"
         ).fetchall()

@@ -1,4 +1,3 @@
-"""Walk-forward framework with embargo, lock box, and stress testing."""
 
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ from src.backtester.types import (
     WalkForwardResult,
 )
 
-
 def walk_forward(
     run_backtest_fn: Callable[[date, date], BacktestResult],
     train_fn: Callable[[date, date], None],
@@ -27,19 +25,6 @@ def walk_forward(
     embargo_days: int = 30,
     step_days: int = 21,
 ) -> list[WalkForwardResult]:
-    """Walk-forward validation with train/embargo/test windows.
-
-    Args:
-        run_backtest_fn: Runs backtest on date range, returns BacktestResult.
-        train_fn: Trains model on date range.
-        start_date: Start of entire evaluation period.
-        end_date: End of entire evaluation period.
-        train_window_days: Training window size.
-        test_window_days: Out-of-sample test window.
-        embargo_days: Gap between train end and test start.
-                      Must be >= max feature lookback.
-        step_days: Step size for rolling window.
-    """
     results = []
     t = start_date
 
@@ -70,14 +55,11 @@ def walk_forward(
 
     return results
 
-
 def verify_embargo(
     embargo_days: int,
     max_feature_lookback_days: int,
 ) -> bool:
-    """Verify embargo is sufficient to prevent leakage."""
     return embargo_days >= max_feature_lookback_days
-
 
 def monte_carlo_permutation_test(
     real_sharpe: float,
@@ -85,10 +67,6 @@ def monte_carlo_permutation_test(
     n_permutations: int = 1000,
     seed: int = 42,
 ) -> tuple[bool, float]:
-    """Run random-signal permutations and check if real sharpe is significant.
-
-    Returns (passed, p95_sharpe).
-    """
     rng = np.random.default_rng(seed)
     perm_sharpes = []
 
@@ -100,7 +78,6 @@ def monte_carlo_permutation_test(
     passed = real_sharpe > p95
     return passed, p95
 
-
 # ── Stress test scenarios ────────────────────────────────────
 
 def apply_stress_scenario(
@@ -108,11 +85,6 @@ def apply_stress_scenario(
     scenario: StressScenario,
     rng: np.random.Generator = None,
 ) -> list:
-    """Apply a stress scenario transformation to tick data.
-
-    For synthetic scenarios, modifies tick data in-place.
-    For historical scenarios, this is a no-op (data is loaded from that period).
-    """
     if rng is None:
         rng = np.random.default_rng(42)
 
@@ -247,17 +219,12 @@ def apply_stress_scenario(
     # The caller loads the appropriate historical data
     return ticks
 
-
 def run_stress_tests(
     backtester: Backtester,
     base_ticks: list,
     max_drawdown_pct: float = 0.20,
     seed: int = 42,
 ) -> dict[str, tuple[bool, float]]:
-    """Run synthetic stress scenarios and check drawdown limits.
-
-    Returns dict of scenario_name -> (passed, max_drawdown_pct).
-    """
     rng = np.random.default_rng(seed)
     results = {}
 

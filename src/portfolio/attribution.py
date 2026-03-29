@@ -1,9 +1,7 @@
-"""P&L attribution: decompose trade PnL into alpha, costs, and slippage."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-
 
 @dataclass
 class TradeAttribution:
@@ -24,7 +22,6 @@ class TradeAttribution:
     def total_pnl(self) -> float:
         return self.alpha_pnl - self.impact_cost - self.timing_slippage - self.spread_cost - self.commission - self.exchange_fee
 
-
 def attribute_trade(
     trade_id: int,
     symbol_id: int,
@@ -39,7 +36,6 @@ def attribute_trade(
     commission_per_share: float = 0.005,
     exchange_fee_per_share: float = 0.003,
 ) -> TradeAttribution:
-    """Decompose a round-trip trade into alpha and cost components."""
     # Alpha: mid-to-mid return * side * size
     alpha_pnl = side * (exit_mid - entry_mid) * size
 

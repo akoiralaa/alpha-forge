@@ -1,4 +1,3 @@
-"""Tests for ArcticDB tick store."""
 
 import numpy as np
 import pandas as pd
@@ -7,7 +6,6 @@ import pytest
 from src.data.arctic_store import TickStore
 from src.data.ingest.base import Tick
 from tests.phase1.conftest import make_tick, make_tick_series
-
 
 class TestTickStore:
     def test_write_and_read_raw_ticks(self, tick_store: TickStore):

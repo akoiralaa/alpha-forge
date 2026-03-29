@@ -1,4 +1,3 @@
-"""Phase 7 validation gate — Execution: WAL, broker, kill switch, reconciliation."""
 
 from __future__ import annotations
 
@@ -10,12 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 results: list[tuple[str, bool, str]] = []
 
-
 def gate(name: str, passed: bool, detail: str = ""):
     tag = "PASS" if passed else "FAIL"
     results.append((name, passed, detail))
     print(f"  [{tag}] {name}" + (f" — {detail}" if detail else ""))
-
 
 from src.execution.wal import OrderState, WALEntry, WriteAheadLog
 from src.execution.broker import BrokerFill, BrokerOrder, PaperBroker
@@ -23,7 +20,6 @@ from src.execution.kill_switch import KillLevel, KillSwitch
 from src.execution.reconciliation import Reconciler
 from src.execution.order_manager import OrderManager
 from src.portfolio.risk import Portfolio, PreTradeRiskCheck
-
 
 # ── 1. WAL durability ──────────────────────────────────────────
 
@@ -46,7 +42,6 @@ gate("wal_durability",
      durable and replay_ok,
      f"persisted={durable}, replay={replay_ok}")
 
-
 # ── 2. Kill switch flattens positions ──────────────────────────
 
 broker = PaperBroker(slippage_bps=0, commission_per_share=0)
@@ -66,7 +61,6 @@ gate("kill_switch_flatten",
      event.positions_flattened == 2 and all_flat,
      f"flattened={event.positions_flattened}, all_flat={all_flat}, pre={pre_pos}")
 
-
 # ── 3. Kill switch blocks new orders ──────────────────────────
 
 broker2 = PaperBroker()
@@ -82,7 +76,6 @@ gate("kill_switch_blocks_orders",
      blocked and unblocked,
      f"blocked={blocked}, after_reset={unblocked}")
 
-
 # ── 4. Drawdown auto-kill ─────────────────────────────────────
 
 broker3 = PaperBroker()
@@ -94,7 +87,6 @@ trigger = ks3.check_drawdown(nav=850_000, peak_nav=1_000_000)
 gate("drawdown_auto_kill",
      no_trigger is None and trigger is not None and trigger.level == KillLevel.FLATTEN,
      f"5%dd=no_trigger, 15%dd=level={trigger.level.name if trigger else 'N/A'}")
-
 
 # ── 5. Reconciliation detects breaks ─────────────────────────
 
@@ -119,7 +111,6 @@ report2 = recon2.reconcile()
 gate("reconciliation_break_detection",
      has_break and break_correct and report2.is_clean,
      f"mismatch_detected={has_break}, diff={50 if break_correct else 'wrong'}, clean={report2.is_clean}")
-
 
 # ── 6. Order manager end-to-end ───────────────────────────────
 
@@ -151,7 +142,6 @@ gate("order_manager_e2e",
      normal_ok and risk_blocked and kill_blocked and wal_count >= 4,
      f"normal={normal_ok}, risk_block={risk_blocked}, kill_block={kill_blocked}, wal_entries={wal_count}")
 
-
 # ── 7. Self-trade prevention ──────────────────────────────────
 
 from src.execution.self_trade import would_self_match
@@ -166,7 +156,6 @@ no_cross = would_self_match(buy_order, [resting_buy])
 gate("self_trade_block",
      cross and not no_cross,
      f"crossing_blocked={cross}, same_side_ok={not no_cross}")
-
 
 # ── 8. Stale data halt ───────────────────────────────────────
 
@@ -193,7 +182,6 @@ gate("stale_data_halt",
      len(early_stale) == 0 and allowed_before and len(later_stale) == 2 and blocked_after and resumed,
      f"early_stale={len(early_stale)}, blocked={blocked_after}, resumed={resumed}")
 
-
 # ── 9. Execution mode decision ───────────────────────────────
 
 from src.execution.execution_mode import execution_mode
@@ -208,7 +196,6 @@ gate("execution_mode_decision",
      passive == "PASSIVE" and aggressive == "AGGRESSIVE" and high_vpin == "PASSIVE"
      and block == "BLOCK" and passive_only == "PASSIVE",
      f"passive={passive}, aggressive={aggressive}, high_vpin={high_vpin}, block={block}, passive_only={passive_only}")
-
 
 # ── Summary ─────────────────────────────────────────────────────
 

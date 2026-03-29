@@ -1,8 +1,3 @@
-"""Position reconciliation between internal state and broker.
-
-Runs periodically to detect and report discrepancies between what
-we think we hold (WAL-derived) and what the broker reports.
-"""
 
 from __future__ import annotations
 
@@ -14,17 +9,14 @@ from typing import Optional
 from src.execution.broker import BrokerInterface, PaperBroker
 from src.execution.wal import OrderState, WriteAheadLog
 
-
 class BreakType(Enum):
     QUANTITY_MISMATCH = "QUANTITY_MISMATCH"
     MISSING_INTERNAL = "MISSING_INTERNAL"    # broker has position, we don't
     MISSING_BROKER = "MISSING_BROKER"        # we have position, broker doesn't
     CASH_MISMATCH = "CASH_MISMATCH"
 
-
 @dataclass
 class ReconciliationBreak:
-    """A discrepancy between internal and broker state."""
     break_type: BreakType
     symbol_id: int
     internal_qty: float
@@ -32,10 +24,8 @@ class ReconciliationBreak:
     difference: float
     timestamp_ns: int
 
-
 @dataclass
 class ReconciliationReport:
-    """Full reconciliation result."""
     timestamp_ns: int
     is_clean: bool
     breaks: list[ReconciliationBreak] = field(default_factory=list)
@@ -43,9 +33,7 @@ class ReconciliationReport:
     broker_positions: dict[int, float] = field(default_factory=dict)
     tolerance: float = 1e-6
 
-
 class Reconciler:
-    """Reconciles internal position state against broker."""
 
     def __init__(
         self,
@@ -59,7 +47,6 @@ class Reconciler:
         self._reports: list[ReconciliationReport] = []
 
     def compute_internal_positions(self) -> dict[int, float]:
-        """Derive positions from WAL by replaying fills."""
         positions: dict[int, float] = {}
         state = self.wal.replay()
         for order_id, entry in state.items():
@@ -73,7 +60,6 @@ class Reconciler:
         return {k: v for k, v in positions.items() if abs(v) > self.tolerance}
 
     def reconcile(self) -> ReconciliationReport:
-        """Run full reconciliation."""
         internal = self.compute_internal_positions()
         broker = self.broker.get_positions()
         # Remove zero broker positions

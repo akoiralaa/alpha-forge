@@ -1,12 +1,3 @@
-"""Kill switch — emergency position flattening and order cancellation.
-
-Three levels:
-  Level 1: Cancel all open orders, no new orders.
-  Level 2: Level 1 + flatten all positions to zero.
-  Level 3: Level 2 + disconnect from broker.
-
-Every kill switch activation is durably logged in the WAL.
-"""
 
 from __future__ import annotations
 
@@ -18,26 +9,21 @@ from typing import Optional
 from src.execution.broker import BrokerInterface, BrokerOrder, PaperBroker
 from src.execution.wal import OrderState, WALEntry, WriteAheadLog
 
-
 class KillLevel(IntEnum):
     NORMAL = 0
     CANCEL_ONLY = 1      # cancel all orders, block new ones
     FLATTEN = 2           # cancel + flatten positions
     DISCONNECT = 3        # cancel + flatten + disconnect
 
-
 @dataclass
 class KillSwitchEvent:
-    """Record of a kill switch activation."""
     timestamp_ns: int
     level: KillLevel
     reason: str
     orders_cancelled: int = 0
     positions_flattened: int = 0
 
-
 class KillSwitch:
-    """Emergency kill switch with three escalation levels."""
 
     def __init__(
         self,
@@ -54,7 +40,6 @@ class KillSwitch:
         self._blocked_since_ns: Optional[int] = None
 
     def activate(self, level: KillLevel, reason: str) -> KillSwitchEvent:
-        """Activate kill switch at given level."""
         if level <= self.level:
             # Already at this level or higher
             return KillSwitchEvent(
@@ -86,7 +71,6 @@ class KillSwitch:
         return event
 
     def check_drawdown(self, nav: float, peak_nav: float) -> Optional[KillSwitchEvent]:
-        """Auto-activate if drawdown exceeds threshold."""
         if peak_nav <= 0 or not self.armed:
             return None
         dd = (peak_nav - nav) / peak_nav
@@ -98,11 +82,9 @@ class KillSwitch:
         return None
 
     def is_order_allowed(self) -> bool:
-        """Check if new orders are permitted."""
         return self.level == KillLevel.NORMAL
 
     def reset(self, reason: str = "manual reset"):
-        """Reset kill switch to normal. Requires explicit action."""
         self.level = KillLevel.NORMAL
         self._blocked_since_ns = None
         self._events.append(KillSwitchEvent(
@@ -112,7 +94,6 @@ class KillSwitch:
         ))
 
     def _cancel_all_orders(self) -> int:
-        """Cancel all open orders via WAL + broker."""
         open_orders = self.wal.get_open_orders()
         cancelled = 0
         for entry in open_orders:
@@ -136,7 +117,6 @@ class KillSwitch:
         return cancelled
 
     def _flatten_all_positions(self) -> int:
-        """Submit market orders to flatten all positions."""
         positions = self.broker.get_positions()
         flattened = 0
         for symbol_id, qty in positions.items():
@@ -188,7 +168,6 @@ class KillSwitch:
         return flattened
 
     def _log_kill_event(self, event: KillSwitchEvent):
-        """Log kill switch activation to WAL as a special entry."""
         entry = WALEntry(
             sequence_id=0,
             timestamp_ns=event.timestamp_ns,

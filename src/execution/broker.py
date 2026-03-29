@@ -1,8 +1,3 @@
-"""Broker interface — abstract protocol + IB TWS implementation.
-
-The abstract BrokerInterface defines the contract. IBBroker implements it
-via ib_insync. A PaperBroker provides deterministic fills for testing.
-"""
 
 from __future__ import annotations
 
@@ -13,10 +8,8 @@ from typing import Callable, Optional, Protocol
 
 from src.execution.wal import OrderState, WALEntry, WriteAheadLog
 
-
 @dataclass
 class BrokerFill:
-    """Fill report from broker."""
     order_id: str
     broker_order_id: str
     symbol_id: int
@@ -27,10 +20,8 @@ class BrokerFill:
     commission: float = 0.0
     is_partial: bool = False
 
-
 @dataclass
 class BrokerOrder:
-    """Order to submit to broker."""
     order_id: str
     symbol_id: int
     side: int             # +1 buy, -1 sell
@@ -39,33 +30,24 @@ class BrokerOrder:
     limit_price: Optional[float] = None
     time_in_force: str = "DAY"
 
-
 class BrokerInterface(Protocol):
-    """Abstract broker interface."""
 
     def submit_order(self, order: BrokerOrder) -> str:
-        """Submit order, return broker_order_id."""
         ...
 
     def cancel_order(self, broker_order_id: str) -> bool:
-        """Cancel order. Returns True if cancel acknowledged."""
         ...
 
     def get_positions(self) -> dict[int, float]:
-        """Get current positions: symbol_id -> signed quantity."""
         ...
 
     def get_cash(self) -> float:
-        """Get current cash balance."""
         ...
 
     def is_connected(self) -> bool:
-        """Check if broker connection is alive."""
         ...
 
-
 class PaperBroker:
-    """Deterministic paper broker for testing — fills immediately at mid."""
 
     def __init__(
         self,
@@ -86,11 +68,9 @@ class PaperBroker:
         self._next_broker_id = 1
 
     def set_price(self, symbol_id: int, price: float):
-        """Set current market price for a symbol."""
         self.prices[symbol_id] = price
 
     def submit_order(self, order: BrokerOrder) -> str:
-        """Immediately fill at current price with slippage."""
         broker_id = f"PAPER-{self._next_broker_id}"
         self._next_broker_id += 1
         self._orders[broker_id] = order

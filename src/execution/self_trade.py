@@ -1,18 +1,9 @@
-"""Self-trade prevention.
-
-Blocks orders that would match against our own resting orders.
-"""
 
 from __future__ import annotations
 
 from src.execution.broker import BrokerOrder
 
-
 def would_self_match(new_order: BrokerOrder, open_orders: list[BrokerOrder]) -> bool:
-    """Check if a new order would match against any existing open order.
-
-    Returns True if the new order should be rejected to prevent self-trade.
-    """
     for existing in open_orders:
         if existing.symbol_id != new_order.symbol_id:
             continue

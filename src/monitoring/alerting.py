@@ -1,8 +1,3 @@
-"""Alerting system — threshold-based alerts with cooldown and escalation.
-
-Alerts fire when metrics cross thresholds. Each alert has a cooldown
-to prevent spam. Severity levels: INFO, WARNING, CRITICAL.
-"""
 
 from __future__ import annotations
 
@@ -11,16 +6,13 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Callable, Optional
 
-
 class AlertSeverity(IntEnum):
     INFO = 0
     WARNING = 1
     CRITICAL = 2
 
-
 @dataclass
 class Alert:
-    """A fired alert."""
     name: str
     severity: AlertSeverity
     message: str
@@ -29,10 +21,8 @@ class Alert:
     timestamp_ns: int
     acknowledged: bool = False
 
-
 @dataclass
 class AlertRule:
-    """Rule that fires when a value crosses a threshold."""
     name: str
     severity: AlertSeverity
     threshold: float
@@ -42,7 +32,6 @@ class AlertRule:
     _last_fired_ns: int = 0
 
     def evaluate(self, value: float, now_ns: int) -> Optional[Alert]:
-        """Check if rule fires. Returns Alert or None."""
         if now_ns - self._last_fired_ns < self.cooldown_ns:
             return None
 
@@ -72,13 +61,10 @@ class AlertRule:
             timestamp_ns=now_ns,
         )
 
-
 # Type for alert handler callbacks
 AlertHandler = Callable[[Alert], None]
 
-
 class AlertManager:
-    """Manages alert rules and dispatches to handlers."""
 
     def __init__(self):
         self._rules: list[AlertRule] = []
@@ -89,11 +75,9 @@ class AlertManager:
         self._rules.append(rule)
 
     def add_handler(self, handler: AlertHandler):
-        """Register a callback that receives fired alerts."""
         self._handlers.append(handler)
 
     def evaluate(self, metric_name: str, value: float) -> list[Alert]:
-        """Evaluate all rules matching metric_name against value."""
         now = time.time_ns()
         fired = []
         for rule in self._rules:
@@ -107,7 +91,6 @@ class AlertManager:
         return fired
 
     def evaluate_all(self, metrics: dict[str, float]) -> list[Alert]:
-        """Evaluate all rules against a dict of metric values."""
         all_fired = []
         for name, value in metrics.items():
             all_fired.extend(self.evaluate(name, value))
@@ -122,7 +105,6 @@ class AlertManager:
         return [a for a in self._fired if not a.acknowledged]
 
     def acknowledge(self, index: int):
-        """Acknowledge alert by index in history."""
         if 0 <= index < len(self._fired):
             self._fired[index].acknowledged = True
 
@@ -130,9 +112,7 @@ class AlertManager:
         for a in self._fired:
             a.acknowledged = True
 
-
 def default_trading_rules() -> list[AlertRule]:
-    """Standard alert rules for a trading system."""
     return [
         AlertRule("drawdown_pct", AlertSeverity.WARNING, 0.05, "gt",
                   message_template="Drawdown {value:.1%} exceeds {threshold:.1%}"),
@@ -150,9 +130,7 @@ def default_trading_rules() -> list[AlertRule]:
                   message_template="Reconciliation break detected: count={value:.0f}"),
     ]
 
-
 def hft_alert_rules() -> list[AlertRule]:
-    """HFT-specific alert rules (latency spikes, fill quality, etc.)."""
     return [
         # LatencySpikeP99: p99 > 2x p50
         AlertRule("latency_spike_p99", AlertSeverity.WARNING, 2.0, "gt",

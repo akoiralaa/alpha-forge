@@ -1,8 +1,3 @@
-"""Tick-by-tick deterministic backtester.
-
-NOT a vectorized engine. One tick in, one state update out.
-Same C++ FeatureEngine binary as live — zero logic drift.
-"""
 
 from __future__ import annotations
 
@@ -32,18 +27,7 @@ from src.backtester.types import (
 # Takes MSV dict and returns Optional[OrderIntent]
 SignalFn = Callable[[object, dict[int, Position]], Optional[OrderIntent]]
 
-
 class Backtester:
-    """Deterministic tick-by-tick backtester.
-
-    Replay loop:
-    1. Load ticks in chronological order by capture_time_ns
-    2. Call engine.on_tick(tick)
-    3. Pass MSV to signal function
-    4. If signal → simulate fill
-    5. If fill → engine.on_fill(fill), update positions
-    6. Record state
-    """
 
     def __init__(
         self,
@@ -83,10 +67,6 @@ class Backtester:
         return total
 
     def run(self, ticks: list) -> BacktestResult:
-        """Run backtest on a list of C++ Tick objects.
-
-        Ticks must be sorted by capture_time_ns.
-        """
         self.engine.reset()
         self.positions.clear()
         self.pnl_history.clear()
@@ -177,7 +157,6 @@ class Backtester:
         last_prices: np.ndarray,
         last_sizes: np.ndarray,
     ) -> BacktestResult:
-        """Run backtest from numpy arrays (avoids creating Python Tick objects)."""
         # Import here to avoid circular
         try:
             from engine import Tick

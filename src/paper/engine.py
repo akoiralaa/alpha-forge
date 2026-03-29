@@ -1,15 +1,3 @@
-"""Paper trading engine — end-to-end integration of all subsystems.
-
-Wires together feature computation, signal generation, position sizing,
-risk checks, regime detection, execution, and monitoring into a single
-tick-driven loop.
-
-Also provides:
-  - Infrastructure Sharpe (paper vs backtest comparison)
-  - Disaster recovery drills
-  - Latency calibration
-  - Staged capital deployment tracking
-"""
 
 from __future__ import annotations
 
@@ -31,10 +19,8 @@ from src.monitoring.metrics import TradingMetrics
 from src.portfolio.risk import OrderIntent, Portfolio, PreTradeRiskCheck
 from src.portfolio.sizing import compute_position_size
 
-
 @dataclass
 class PaperTick:
-    """Simplified tick for paper trading."""
     symbol_id: int
     price: float
     volume: int
@@ -42,10 +28,8 @@ class PaperTick:
     bid: float = 0.0
     ask: float = 0.0
 
-
 @dataclass
 class PaperConfig:
-    """Paper trading configuration."""
     initial_nav: float = 1_000_000.0
     risk_budget_per_position: float = 0.005
     max_position_pct_nav: float = 0.05
@@ -56,10 +40,8 @@ class PaperConfig:
     drawdown_auto_kill_pct: float = 0.15
     kelly_fraction: float = 0.25
 
-
 @dataclass
 class PaperTradingStats:
-    """Accumulated statistics from a paper trading session."""
     ticks_processed: int = 0
     orders_submitted: int = 0
     orders_filled: int = 0
@@ -74,9 +56,7 @@ class PaperTradingStats:
     max_drawdown_pct: float = 0.0
     total_pnl: float = 0.0
 
-
 class PaperTradingEngine:
-    """End-to-end paper trading engine integrating all subsystems."""
 
     def __init__(self, config: PaperConfig | None = None):
         self.config = config or PaperConfig()
@@ -121,7 +101,6 @@ class PaperTradingEngine:
         self._signal_fn: Optional[callable] = None
 
     def set_signal_function(self, fn):
-        """Set custom signal function: fn(symbol_id, price, engine) -> float."""
         self._signal_fn = fn
 
     def _setup_health_checks(self):
@@ -135,10 +114,6 @@ class PaperTradingEngine:
         ))
 
     def on_tick(self, tick: PaperTick) -> Optional[str]:
-        """Process a single tick through the full pipeline.
-
-        Returns order_id if an order was submitted, None otherwise.
-        """
         self._tick_count += 1
         self.stats.ticks_processed += 1
         self.metrics.ticks_processed.inc()
@@ -200,7 +175,6 @@ class PaperTradingEngine:
         return order_id
 
     def _compute_signal(self, symbol_id: int, price: float) -> float:
-        """Compute trading signal for a symbol."""
         if self._signal_fn:
             return self._signal_fn(symbol_id, price, self)
 
@@ -219,7 +193,6 @@ class PaperTradingEngine:
         return float(np.clip(-zscore * 0.3, -1.0, 1.0))
 
     def _execute_signal(self, symbol_id: int, signal: float, price: float) -> Optional[str]:
-        """Size and submit an order based on signal."""
         # Estimate daily vol
         rets = self.returns.get(symbol_id, [])
         daily_vol = np.std(rets[-20:]) * np.sqrt(252) if len(rets) >= 20 else 0.02
@@ -271,7 +244,6 @@ class PaperTradingEngine:
         return order.order_id
 
     def _update_nav(self):
-        """Mark positions to market and update NAV."""
         positions = self.broker.get_positions()
         unrealized = sum(
             qty * self.prices.get(sid, 0)
@@ -287,7 +259,6 @@ class PaperTradingEngine:
         self.stats.total_pnl = self.portfolio.nav - self.config.initial_nav
 
     def _run_reconciliation(self):
-        """Run position reconciliation."""
         report = self.reconciler.reconcile()
         self.stats.reconciliation_runs += 1
         if not report.is_clean:
@@ -295,7 +266,6 @@ class PaperTradingEngine:
             self.metrics.reconciliation_breaks.inc(len(report.breaks))
 
     def run_session(self, ticks: list[PaperTick]) -> PaperTradingStats:
-        """Run a full paper trading session on a tick stream."""
         for tick in ticks:
             self.on_tick(tick)
         # Final reconciliation
@@ -303,14 +273,11 @@ class PaperTradingEngine:
         return self.stats
 
     def get_health(self) -> dict:
-        """Get current system health."""
         result = self.health.check()
         return {
             "status": result.status.value,
             "components": {c.name: c.status.value for c in result.components},
         }
-
-
 
 # Infrastructure Sharpe
 
@@ -319,16 +286,6 @@ def compute_infrastructure_sharpe(
     backtest_returns: np.ndarray,
     annualization: float = 252.0,
 ) -> dict:
-    """Compute infrastructure_sharpe = paper_sharpe / backtest_sharpe.
-
-    Args:
-        paper_returns: Daily returns from paper trading.
-        backtest_returns: Daily returns from backtest over the same period.
-        annualization: Annualization factor.
-
-    Returns:
-        Dict with paper_sharpe, backtest_sharpe, infrastructure_sharpe, passed.
-    """
     def _sharpe(r: np.ndarray) -> float:
         if len(r) < 2 or np.std(r) < 1e-12:
             return 0.0
@@ -345,8 +302,6 @@ def compute_infrastructure_sharpe(
         "passed": ratio >= 0.80,
     }
 
-
-
 # Disaster recovery drills
 
 @dataclass
@@ -356,22 +311,13 @@ class DrillResult:
     detail: str = ""
     timestamp_ns: int = 0
 
-
 class DisasterRecoveryDrills:
-    """Runs disaster recovery drills before going live."""
 
     def __init__(self, engine: PaperTradingEngine):
         self.engine = engine
         self.results: list[DrillResult] = []
 
     def drill_1_crash_recovery(self) -> DrillResult:
-        """DRILL_1: Execution engine crash recovery.
-
-        Simulates kill -9 with open positions. Verifies:
-        - Kill switch L3 activates (flatten)
-        - Positions recovered from broker snapshot
-        - No ghost positions after recovery
-        """
         ts = time.time_ns()
         eng = self.engine
 
@@ -397,13 +343,6 @@ class DisasterRecoveryDrills:
         return result
 
     def drill_2_feed_outage(self) -> DrillResult:
-        """DRILL_2: Feed outage recovery.
-
-        Simulates disconnecting market data for >500ms. Verifies:
-        - Stale data halt activates
-        - Orders cancelled
-        - Reconciliation clean after recovery
-        """
         ts = time.time_ns()
         eng = self.engine
 
@@ -436,13 +375,6 @@ class DisasterRecoveryDrills:
         return result
 
     def drill_3_kill_switch_l2(self) -> DrillResult:
-        """DRILL_3: Kill switch L2 activation.
-
-        Triggers kill_switch.activate_level2 and verifies:
-        - All orders cancelled
-        - All positions flattened
-        - Portfolio flat within time limit
-        """
         ts = time.time_ns()
         eng = self.engine
 
@@ -464,7 +396,6 @@ class DisasterRecoveryDrills:
         return result
 
     def all_drills_passed(self) -> bool:
-        """Check if all 3 drills have been run and passed."""
         names = {r.drill_name for r in self.results if r.passed}
         return all(d in names for d in [
             "DRILL_1_crash_recovery",
@@ -472,13 +403,10 @@ class DisasterRecoveryDrills:
             "DRILL_3_kill_switch_l2",
         ])
 
-
-
 # Latency calibration
 
 @dataclass
 class LatencyCalibration:
-    """Latency calibration results comparing paper trading to backtest assumptions."""
     p50_actual_ns: float
     p99_actual_ns: float
     backtest_assumed_p50_ns: float
@@ -495,17 +423,10 @@ class LatencyCalibration:
         else:
             self.status = "FAIL"
 
-
 def calibrate_latency(
     fill_latencies_ns: np.ndarray,
     backtest_assumed_p50_ns: float,
 ) -> LatencyCalibration:
-    """Compute latency calibration from observed fill latencies.
-
-    Args:
-        fill_latencies_ns: Array of observed fill latencies in nanoseconds.
-        backtest_assumed_p50_ns: Backtest-assumed p50 latency in nanoseconds.
-    """
     if len(fill_latencies_ns) == 0:
         return LatencyCalibration(0, 0, backtest_assumed_p50_ns)
 
@@ -518,8 +439,6 @@ def calibrate_latency(
         backtest_assumed_p50_ns=backtest_assumed_p50_ns,
     )
 
-
-
 # Capital deployment stages
 
 class DeploymentStage(Enum):
@@ -529,7 +448,6 @@ class DeploymentStage(Enum):
     LIVE_50PCT = 3  # Stage 3: Month 2, 50% of target capital
     LIVE_100PCT = 4 # Stage 4: Month 3+, 100% of target capital
 
-
 STAGE_CAPITAL_PCT = {
     DeploymentStage.PAPER: 0.0,
     DeploymentStage.LIVE_5PCT: 0.05,
@@ -537,7 +455,6 @@ STAGE_CAPITAL_PCT = {
     DeploymentStage.LIVE_50PCT: 0.50,
     DeploymentStage.LIVE_100PCT: 1.00,
 }
-
 
 @dataclass
 class StageTransition:
@@ -549,9 +466,7 @@ class StageTransition:
     allowed: bool
     reason: str = ""
 
-
 class CapitalDeploymentManager:
-    """Tracks staged capital deployment from paper to full live."""
 
     SHARPE_GATE = 0.80  # live_sharpe >= 0.80 * paper_sharpe
 
@@ -565,7 +480,6 @@ class CapitalDeploymentManager:
         return self.target_capital * STAGE_CAPITAL_PCT[self.current_stage]
 
     def can_advance(self, live_sharpe: float, paper_sharpe: float) -> StageTransition:
-        """Check if we can advance to the next deployment stage."""
         if self.current_stage == DeploymentStage.LIVE_100PCT:
             return StageTransition(
                 self.current_stage, self.current_stage,
@@ -587,7 +501,6 @@ class CapitalDeploymentManager:
         return transition
 
     def advance(self, live_sharpe: float, paper_sharpe: float) -> StageTransition:
-        """Attempt to advance to the next deployment stage."""
         transition = self.can_advance(live_sharpe, paper_sharpe)
         if transition.allowed:
             self.current_stage = transition.to_stage

@@ -1,4 +1,3 @@
-"""Phase 4 test fixtures."""
 
 from __future__ import annotations
 
@@ -14,9 +13,7 @@ build_dir = Path(__file__).resolve().parent.parent.parent / "src" / "cpp" / "bui
 sys.path.insert(0, str(build_dir))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-
 def make_msv(**kwargs):
-    """Create a mock MSV with given field values, NaN for the rest."""
     defaults = dict(
         symbol_id=1, timestamp_ns=0, valid=True,
         ret_1s=0.0, ret_10s=0.0, ret_60s=0.0, ret_300s=0.0,
@@ -30,9 +27,7 @@ def make_msv(**kwargs):
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
 
-
 def generate_features_and_returns(n=2000, n_features=19, seed=42):
-    """Generate synthetic features X and forward returns y with signal content."""
     rng = np.random.default_rng(seed)
     X = rng.standard_normal((n, n_features))
     # y has weak linear relationship with first 3 features + noise

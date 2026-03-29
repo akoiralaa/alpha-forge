@@ -1,9 +1,3 @@
-"""Online regime tracker — combines GMM snapshot + HMM temporal dynamics.
-
-Provides a unified regime state that trading logic consumes.
-Uses SmoothedRegimePosterior for transition smoothing and REGIME_PARAMS
-for per-regime parameter switching.
-"""
 
 from __future__ import annotations
 
@@ -21,10 +15,8 @@ from src.regime.params import (
     get_regime_params,
 )
 
-
 @dataclass
 class RegimeState:
-    """Unified regime state consumed by trading logic."""
     regime_id: int
     regime_label: str
     gmm_regime: GMMRegime
@@ -36,13 +28,7 @@ class RegimeState:
     params: RegimeParams = field(default_factory=RegimeParams)
     smoothed_posterior: Optional[np.ndarray] = None
 
-
 class RegimeTracker:
-    """Combines GMM + HMM into a single regime signal with online updates.
-
-    Uses SmoothedRegimePosterior (protocol 6.3) for transition smoothing
-    and REGIME_PARAMS (protocol 6.4) for per-regime parameter switching.
-    """
 
     def __init__(
         self,
@@ -64,7 +50,6 @@ class RegimeTracker:
         self._history: list[RegimeState] = []
 
     def fit(self, X: np.ndarray) -> "RegimeTracker":
-        """Fit both GMM and HMM on historical feature matrix."""
         self.gmm.fit(X)
         self.hmm.fit(X)
         self.smoother.reset()
@@ -72,7 +57,6 @@ class RegimeTracker:
         return self
 
     def update(self, x: np.ndarray) -> RegimeState:
-        """Process new observation, return unified regime state."""
         if not self.fitted:
             raise RuntimeError("RegimeTracker not fitted")
 

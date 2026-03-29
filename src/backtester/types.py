@@ -1,4 +1,3 @@
-"""Core types for the backtester."""
 
 from __future__ import annotations
 
@@ -12,16 +11,13 @@ from typing import Optional
 
 import numpy as np
 
-
 class Side(IntEnum):
     BUY = 1
     SELL = -1
 
-
 class OrderType(Enum):
     MARKET = "MARKET"
     LIMIT = "LIMIT"
-
 
 class StressScenario(Enum):
     CRISIS_2008 = "CRISIS_2008"
@@ -34,7 +30,6 @@ class StressScenario(Enum):
     CORRELATION_CRISIS = "CORRELATION_CRISIS"
     FEED_OUTAGE_5S = "FEED_OUTAGE_5S"
 
-
 @dataclass(frozen=True)
 class OrderIntent:
     symbol_id: int
@@ -45,10 +40,8 @@ class OrderIntent:
     signal_time_ns: int = 0
     signal_strength: float = 0.0
 
-
 @dataclass(frozen=True)
 class BookSnapshot:
-    """Point-in-time book state for fill simulation."""
     symbol_id: int
     timestamp_ns: int
     bid: float
@@ -73,10 +66,8 @@ class BookSnapshot:
             return 0.0
         return (self.ask - self.bid) / m * 10000.0
 
-
 @dataclass(frozen=True)
 class SimFill:
-    """Simulated fill result."""
     symbol_id: int
     side: Side
     fill_price: float
@@ -86,10 +77,8 @@ class SimFill:
     impact_bps: float = 0.0
     latency_ns: int = 0
 
-
 @dataclass
 class InstrumentSpec:
-    """Per-instrument cost parameters."""
     symbol_id: int
     commission_bps: float = 0.5
     taker_fee_bps: float = 0.3
@@ -98,10 +87,8 @@ class InstrumentSpec:
     adv_20d: float = 1_000_000.0
     realized_vol_daily_bps: float = 100.0
 
-
 @dataclass
 class Position:
-    """Current position in an instrument."""
     symbol_id: int
     quantity: int = 0
     avg_price: float = 0.0
@@ -140,10 +127,8 @@ class Position:
             self.quantity = remaining
         self.update_mark(fill.fill_price)
 
-
 @dataclass
 class BacktestResult:
-    """Results from a backtest run."""
     pnl_series: np.ndarray
     total_pnl: float = 0.0
     sharpe: float = 0.0
@@ -172,7 +157,6 @@ class BacktestResult:
         peak = np.max(np.abs(cummax))
         self.max_drawdown_pct = float(abs(self.max_drawdown) / peak) if peak > 0 else 0.0
 
-
 @dataclass
 class WalkForwardResult:
     train_range: tuple[date, date]
@@ -182,10 +166,8 @@ class WalkForwardResult:
     max_drawdown: float = 0.0
     n_trades: int = 0
 
-
 @dataclass
 class LockBox:
-    """Lock box for holdout data — access_count must be 0 until final eval."""
     start_date: date
     end_date: date
     data_hash: str = ""
@@ -214,7 +196,6 @@ class LockBox:
         )
 
     def access(self) -> None:
-        """Increment access count and persist. Call this ONLY for final eval."""
         self.access_count += 1
         if self._path:
             self.save(self._path)

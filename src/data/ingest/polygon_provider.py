@@ -1,12 +1,3 @@
-"""Polygon.io data provider — supplementary historical data for US equities.
-
-Used for:
-- Deep tick-level historical backfill (2+ years) where IB's history runs out
-- Corporate action history (splits, dividends, mergers)
-- Reference data (tickers, exchanges, market status)
-
-Free tier: 5 API calls/minute. Paid tiers for higher throughput.
-"""
 
 from __future__ import annotations
 
@@ -28,19 +19,11 @@ from src.data.ingest.base import (
 
 logger = logging.getLogger(__name__)
 
-
 def _date_str(ns: int) -> str:
-    """Convert nanosecond timestamp to YYYY-MM-DD string."""
     dt = datetime.fromtimestamp(ns / 1_000_000_000, tz=timezone.utc)
     return dt.strftime("%Y-%m-%d")
 
-
 class PolygonProvider(DataProvider):
-    """Polygon.io REST API data provider.
-
-    Primary use: historical US equity tick data backfill and corporate actions.
-    Not used for futures/FX/bonds (IB covers those).
-    """
 
     BASE_URL = "https://api.polygon.io"
 
@@ -75,7 +58,6 @@ class PolygonProvider(DataProvider):
         end_ns: int,
         bar_size: str = "1min",
     ) -> pd.DataFrame:
-        """Fetch historical bars from Polygon."""
         if self._client is None:
             raise RuntimeError("Not connected")
 
@@ -133,7 +115,6 @@ class PolygonProvider(DataProvider):
         start_ns: int,
         end_ns: int,
     ) -> Iterator[Tick]:
-        """Fetch historical trades from Polygon. Requires paid tier for full history."""
         if self._client is None:
             raise RuntimeError("Not connected")
 
@@ -175,13 +156,11 @@ class PolygonProvider(DataProvider):
         symbols: list[str],
         asset_class: AssetClass,
     ) -> Iterator[Tick]:
-        """Polygon WebSocket streaming — requires paid tier."""
         raise NotImplementedError(
             "Polygon real-time streaming requires paid subscription. Use IBKRProvider for live data."
         )
 
     def get_instrument_info(self, symbol: str, asset_class: AssetClass) -> dict:
-        """Get ticker details from Polygon."""
         if self._client is None:
             raise RuntimeError("Not connected")
 
@@ -214,7 +193,6 @@ class PolygonProvider(DataProvider):
         start_ns: int,
         end_ns: int,
     ) -> list[dict]:
-        """Fetch splits and dividends from Polygon."""
         if self._client is None:
             raise RuntimeError("Not connected")
 
@@ -267,7 +245,6 @@ class PolygonProvider(DataProvider):
 
     @staticmethod
     def _resolve_polygon_ticker(symbol: str, asset_class: AssetClass) -> str:
-        """Map our symbol naming to Polygon's ticker format."""
         if asset_class == AssetClass.FX:
             # Polygon uses C:EURUSD format for forex
             return f"C:{symbol}"

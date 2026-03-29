@@ -1,5 +1,3 @@
-"""Phase 7 tests — WAL, broker, kill switch, reconciliation, order manager,
-self-trade prevention, execution mode, stale data halt."""
 
 from __future__ import annotations
 
@@ -20,7 +18,6 @@ from src.execution.stale_data import StaleDataMonitor
 from src.execution.reconciliation import BreakType, Reconciler
 from src.execution.order_manager import OrderManager
 from src.portfolio.risk import Portfolio, PreTradeRiskCheck
-
 
 # ── WAL Tests ───────────────────────────────────────────────────
 
@@ -92,7 +89,6 @@ class TestWAL:
         assert latest.state == OrderState.FILLED
         wal2.close()
 
-
 # ── Broker Tests ────────────────────────────────────────────────
 
 class TestPaperBroker:
@@ -146,7 +142,6 @@ class TestPaperBroker:
     def test_is_connected(self):
         broker = PaperBroker()
         assert broker.is_connected()
-
 
 # ── Kill Switch Tests ───────────────────────────────────────────
 
@@ -207,7 +202,6 @@ class TestKillSwitch:
         _, wal, ks = self._make_kill_switch()
         ks.activate(KillLevel.CANCEL_ONLY, "test kill")
         assert wal.entry_count() >= 1
-
 
 # ── Reconciliation Tests ────────────────────────────────────────
 
@@ -271,7 +265,6 @@ class TestReconciliation:
         recon = Reconciler(broker, wal)
         report = recon.reconcile()
         assert report.is_clean
-
 
 # ── Order Manager Tests ─────────────────────────────────────────
 
@@ -360,7 +353,6 @@ class TestOrderManager:
         filled = mgr.get_filled_orders()
         assert len(filled) == 1
 
-
 # ── Self-Trade Prevention Tests ────────────────────────────────
 
 class TestSelfTradePrevention:
@@ -401,7 +393,6 @@ class TestSelfTradePrevention:
         new = BrokerOrder("N1", 1, 1, 50, "LIMIT", 100.0)
         assert not would_self_match(new, [])
 
-
 # ── Execution Mode Tests ───────────────────────────────────────
 
 class TestExecutionMode:
@@ -434,7 +425,6 @@ class TestExecutionMode:
     def test_passive_preferred_default(self):
         result = execution_mode(0.5, 100.0, 5.0, 0.3)
         assert result == "PASSIVE"
-
 
 # ── Stale Data Monitor Tests ──────────────────────────────────
 

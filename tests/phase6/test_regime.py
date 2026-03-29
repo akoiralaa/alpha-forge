@@ -1,4 +1,3 @@
-"""Phase 6 tests — GMM, HMM, SmoothedRegimePosterior, REGIME_PARAMS, RegimeTracker."""
 
 from __future__ import annotations
 
@@ -20,13 +19,7 @@ from src.regime.params import (
 )
 from src.regime.tracker import RegimeTracker
 
-
 def _make_5regime_data(rng, n_per=150):
-    """Generate synthetic 5-regime data matching protocol labels.
-
-    Features: [vol, return, spread, volume_ratio]
-    Ordered by ascending vol so canonical ordering maps correctly.
-    """
     # LOW_VOL_TRENDING: low vol, positive drift
     r0 = rng.multivariate_normal(
         [0.005, 0.001, 0.01, 1.0],
@@ -52,9 +45,7 @@ def _make_5regime_data(rng, n_per=150):
     labels = np.concatenate([np.full(n_per, i) for i in range(5)])
     return X, labels
 
-
 def _make_3regime_data(rng, n_per=200):
-    """Simple 3-regime data for backward-compat tests."""
     low = rng.multivariate_normal(
         [0.005, 0.0001, 0.01, 1.0],
         np.diag([0.001, 0.0001, 0.001, 0.01]) ** 2, n_per)
@@ -67,7 +58,6 @@ def _make_3regime_data(rng, n_per=200):
     X = np.vstack([low, normal, high])
     labels = np.array([0] * n_per + [1] * n_per + [2] * n_per)
     return X, labels
-
 
 # ── GMM Tests ───────────────────────────────────────────────────
 
@@ -132,7 +122,6 @@ class TestGMM:
         accuracy = (pred == true_labels).mean()
         assert accuracy > 0.80
 
-
 # ── HMM Tests ───────────────────────────────────────────────────
 
 class TestHMM:
@@ -187,7 +176,6 @@ class TestHMM:
         with pytest.raises(RuntimeError):
             det.decode(np.zeros((10, 4)))
 
-
 # ── SmoothedRegimePosterior Tests ────────────────────────────────
 
 class TestSmoothedPosterior:
@@ -234,7 +222,6 @@ class TestSmoothedPosterior:
         assert sp.current_regime() == -1
         np.testing.assert_allclose(sp.smoothed, np.ones(3) / 3, atol=1e-6)
 
-
 # ── REGIME_PARAMS Tests ─────────────────────────────────────────
 
 class TestRegimeParams:
@@ -262,7 +249,6 @@ class TestRegimeParams:
         p = get_regime_params("UNKNOWN_REGIME")
         assert isinstance(p, RegimeParams)
         assert p.position_size_scalar == 1.0
-
 
 # ── Tracker Tests ────────────────────────────────────────────────
 

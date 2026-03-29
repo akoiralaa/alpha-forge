@@ -1,4 +1,3 @@
-"""Tests for price adjustment engine."""
 
 import numpy as np
 import pandas as pd
@@ -8,10 +7,8 @@ from src.data.adjustments import PriceAdjuster
 from src.data.ingest.base import AssetClass, Tick, date_to_ns
 from src.data.symbol_master import SymbolMaster
 
-
 class TestPriceAdjuster:
     def _setup_stock_with_split(self, sm: SymbolMaster) -> int:
-        """Create a stock with a 2:1 split and return its canonical_id."""
         cid = sm.add_instrument(
             exchange="NASDAQ", ticker="TEST", valid_from_ns=date_to_ns(2020, 1, 1),
             asset_class=AssetClass.EQUITY, currency="USD",
@@ -22,7 +19,6 @@ class TestPriceAdjuster:
         return cid
 
     def _make_price_df(self, n_before: int, n_after: int, split_ns: int) -> pd.DataFrame:
-        """Create a tick DataFrame with prices before and after a 2:1 split."""
         rows = []
         # Before split: stock trading at ~$200
         for i in range(n_before):
@@ -86,7 +82,6 @@ class TestPriceAdjuster:
         assert np.allclose(after["last_price"].values, 100.0, atol=0.1)
 
     def test_split_adjustment_continuity(self, symbol_master: SymbolMaster):
-        """Adjusted price should be continuous across split boundary."""
         cid = self._setup_stock_with_split(symbol_master)
         adjuster = PriceAdjuster(symbol_master)
         split_ns = date_to_ns(2020, 7, 1)
@@ -97,7 +92,6 @@ class TestPriceAdjuster:
         assert passes
 
     def test_size_adjusted_inversely(self, symbol_master: SymbolMaster):
-        """On a 2:1 split, sizes should double for pre-split records."""
         cid = self._setup_stock_with_split(symbol_master)
         adjuster = PriceAdjuster(symbol_master)
         split_ns = date_to_ns(2020, 7, 1)

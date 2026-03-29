@@ -1,8 +1,3 @@
-"""Gaussian Mixture Model regime detector.
-
-Classifies market observations into regimes (e.g., low-vol, normal, crisis)
-based on clustering of feature vectors: [realized_vol, return, spread, volume_ratio].
-"""
 
 from __future__ import annotations
 
@@ -12,15 +7,12 @@ from typing import Optional
 import numpy as np
 from sklearn.mixture import GaussianMixture
 
-
 @dataclass
 class GMMRegime:
-    """Result of a single-step GMM classification."""
     regime_id: int                # 0-based regime label
     regime_label: str             # human-readable label
     probabilities: np.ndarray     # posterior probs per regime
     confidence: float             # max posterior probability
-
 
 # Canonical ordering: regimes sorted by ascending mean volatility
 # Protocol-defined 5-regime labels
@@ -38,15 +30,12 @@ REGIME_LABELS = {
     5: REGIME_LABELS_5,
 }
 
-
 def _default_labels(n: int) -> list[str]:
     if n in REGIME_LABELS:
         return REGIME_LABELS[n]
     return [f"regime_{i}" for i in range(n)]
 
-
 class GMMRegimeDetector:
-    """Fits a GMM to historical feature observations and classifies new ones."""
 
     def __init__(
         self,
@@ -67,11 +56,6 @@ class GMMRegimeDetector:
         self.fitted = False
 
     def fit(self, X: np.ndarray) -> "GMMRegimeDetector":
-        """Fit GMM to observation matrix X (n_samples, n_features).
-
-        After fitting, regimes are re-ordered so regime 0 has the lowest
-        mean volatility (column vol_index).
-        """
         self.model = GaussianMixture(
             n_components=self.n_regimes,
             covariance_type=self.covariance_type,
@@ -87,7 +71,6 @@ class GMMRegimeDetector:
         return self
 
     def predict(self, x: np.ndarray) -> GMMRegime:
-        """Classify a single observation vector."""
         if not self.fitted or self.model is None:
             raise RuntimeError("GMMRegimeDetector not fitted")
 
@@ -107,7 +90,6 @@ class GMMRegimeDetector:
         )
 
     def predict_batch(self, X: np.ndarray) -> list[GMMRegime]:
-        """Classify multiple observations."""
         if not self.fitted or self.model is None:
             raise RuntimeError("GMMRegimeDetector not fitted")
 
@@ -126,13 +108,11 @@ class GMMRegimeDetector:
         return results
 
     def bic(self, X: np.ndarray) -> float:
-        """Bayesian Information Criterion (lower = better fit with penalty)."""
         if not self.fitted or self.model is None:
             raise RuntimeError("GMMRegimeDetector not fitted")
         return float(self.model.bic(X))
 
     def aic(self, X: np.ndarray) -> float:
-        """Akaike Information Criterion."""
         if not self.fitted or self.model is None:
             raise RuntimeError("GMMRegimeDetector not fitted")
         return float(self.model.aic(X))

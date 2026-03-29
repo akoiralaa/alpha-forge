@@ -1,7 +1,3 @@
-"""Tier 3: ML signal models.
-
-Time-series split only. No shuffle. No k-fold.
-"""
 
 from __future__ import annotations
 
@@ -11,9 +7,7 @@ import numpy as np
 
 from src.signals.base import UNIVERSAL_FEATURES
 
-
 class LightGBMSignal:
-    """LightGBM gradient boosted tree signal."""
 
     name = "lightgbm"
 
@@ -72,9 +66,7 @@ class LightGBMSignal:
         return {self._feature_names[i]: float(imp[i])
                 for i in range(min(len(imp), len(self._feature_names)))}
 
-
 class RandomForestSignal:
-    """Random forest signal — shallow trees for anti-overfitting."""
 
     name = "random_forest"
 
@@ -114,9 +106,7 @@ class RandomForestSignal:
         return {self._feature_names[i]: float(imp[i])
                 for i in range(min(len(imp), len(self._feature_names)))}
 
-
 class MLPSignal:
-    """Simple MLP signal — max 3 layers."""
 
     name = "mlp"
 
@@ -156,7 +146,6 @@ class MLPSignal:
         importance = np.abs(first_layer).sum(axis=1)
         return {self._feature_names[i]: float(importance[i])
                 for i in range(min(len(importance), len(self._feature_names)))}
-
 
 TIER3_MODELS = {
     "lightgbm": LightGBMSignal,

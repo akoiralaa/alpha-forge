@@ -1,8 +1,3 @@
-"""Per-regime dynamic parameter sets and smoothed posterior tracker.
-
-Defines regime-conditional parameters for signal weights,
-position sizing, stop losses, and execution mode.
-"""
 
 from __future__ import annotations
 
@@ -12,17 +7,14 @@ from typing import Optional
 
 import numpy as np
 
-
 @dataclass
 class RegimeParams:
-    """Dynamic parameter set applied when a regime is active."""
     momentum_weight: float = 0.33
     mean_reversion_weight: float = 0.33
     ofi_weight: float = 0.33
     position_size_scalar: float = 1.0
     stop_loss_sigma: float = 2.0
     execution_mode: str = "PASSIVE_PREFERRED"  # PASSIVE_PREFERRED, PASSIVE_ONLY, REDUCE_ONLY
-
 
 # Default parameter sets per regime
 REGIME_PARAMS: dict[str, RegimeParams] = {
@@ -68,18 +60,10 @@ REGIME_PARAMS: dict[str, RegimeParams] = {
     ),
 }
 
-
 def get_regime_params(regime_label: str) -> RegimeParams:
-    """Get parameters for a regime label. Falls back to defaults."""
     return REGIME_PARAMS.get(regime_label, RegimeParams())
 
-
 class SmoothedRegimePosterior:
-    """Smoothed posterior with confirmation logic.
-
-    Prevents noisy regime oscillation by requiring confirmation steps
-    before committing to a regime switch.
-    """
 
     BETA: float = 0.10
     CONFIRMATION_STEPS: int = 10
@@ -92,7 +76,6 @@ class SmoothedRegimePosterior:
         self._current_regime: int = -1
 
     def update(self, raw_posterior: np.ndarray) -> np.ndarray:
-        """Apply exponential smoothing to raw posterior."""
         self.smoothed = (
             self.BETA * raw_posterior
             + (1.0 - self.BETA) * self.smoothed
@@ -116,7 +99,6 @@ class SmoothedRegimePosterior:
         return self.smoothed
 
     def current_regime(self) -> int:
-        """Return confirmed regime ID, or -1 if uncertain."""
         dominant = int(np.argmax(self.smoothed))
         if (self.smoothed[dominant] >= self.SWITCH_THRESHOLD
                 and self.confirmation_counter.get(dominant, 0) >= self.CONFIRMATION_STEPS):

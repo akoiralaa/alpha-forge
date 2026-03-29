@@ -1,13 +1,3 @@
-"""Dynamic universe management — recomputed at market open every trading day.
-
-The tradeable universe is not static. It adapts based on liquidity filters per
-asset class. Assets below thresholds are removed; assets above are added.
-Universe is stored as date-partitioned snapshots for point-in-time backtesting.
-
-This prevents:
-1. Trading illiquid instruments (adverse market impact)
-2. Survivorship bias in live trading (universe adapts as markets change)
-"""
 
 from __future__ import annotations
 
@@ -23,10 +13,8 @@ from src.data.symbol_master import SymbolMaster
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass(slots=True, frozen=True)
 class UniverseFilter:
-    """Liquidity filter thresholds per asset class."""
     # Equities
     equity_adv_min_usd: float = 10_000_000.0     # 20-day ADV >= $10M
     equity_price_min: float = 5.0                  # price >= $5
@@ -44,7 +32,6 @@ class UniverseFilter:
     # Bond futures: always included if listed on major exchange
     # (no filter — they pass by default)
 
-
 # Standard instruments per the build protocol
 EQUITY_ETFS = [
     "SPY", "QQQ", "XLK", "XLV", "XLE", "XLF", "XLI", "XLB", "XLU", "XLRE", "XLC", "XLP", "XLY",
@@ -55,10 +42,8 @@ FIXED_INCOME_FUTURES = ["ZN", "ZB", "ZF", "ZT", "GE"]
 FX_PAIRS = ["EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]
 VIX_FUTURES = ["VX"]
 
-
 @dataclass
 class UniverseSnapshot:
-    """A point-in-time snapshot of the tradeable universe."""
     date_ns: int
     symbol_ids: list[int]
     asset_classes: dict[int, str]   # symbol_id -> asset_class
@@ -82,13 +67,7 @@ class UniverseSnapshot:
             "date_ns": [self.date_ns] * len(self.symbol_ids),
         })
 
-
 class UniverseManager:
-    """Manages the dynamic tradeable universe with date-partitioned snapshots.
-
-    Recomputes the universe based on liquidity filters applied to each asset class.
-    Stores snapshots in ArcticDB for point-in-time backtesting queries.
-    """
 
     SNAPSHOT_KEY_PREFIX = "universe_"
 
@@ -105,10 +84,6 @@ class UniverseManager:
         self._filters = filters or UniverseFilter()
 
     def compute_universe(self, as_of_ns: int) -> UniverseSnapshot:
-        """Compute the tradeable universe as of a specific timestamp.
-
-        Applies per-asset-class liquidity filters to all active instruments.
-        """
         active = self._sm.get_active_instruments(as_of_ns)
         included_ids = []
         asset_classes: dict[int, str] = {}
@@ -133,7 +108,6 @@ class UniverseManager:
         return snapshot
 
     def _check_instrument(self, inst, as_of_ns: int) -> bool:
-        """Check if an instrument passes its asset-class-specific liquidity filter."""
         ac = inst.asset_class
 
         if ac == AssetClass.EQUITY or ac == AssetClass.ETF:
@@ -155,7 +129,6 @@ class UniverseManager:
         return False
 
     def _check_equity(self, canonical_id: int, as_of_ns: int) -> bool:
-        """Equity filter: ADV >= $10M, price >= $5, market cap >= $500M."""
         adv = self._fund.get_as_of(canonical_id, FundamentalsStore.METRIC_ADV_20D, as_of_ns)
         if adv is None or adv.value < self._filters.equity_adv_min_usd:
             return False
@@ -175,7 +148,6 @@ class UniverseManager:
         return True
 
     def _check_future(self, inst, as_of_ns: int) -> bool:
-        """Futures filter by type: equity index futures vs commodity futures."""
         oi = self._fund.get_as_of(
             inst.canonical_id, FundamentalsStore.METRIC_OPEN_INTEREST, as_of_ns
         )
@@ -190,14 +162,12 @@ class UniverseManager:
         return oi.value >= self._filters.eq_futures_oi_min
 
     def _check_fx(self, canonical_id: int, as_of_ns: int) -> bool:
-        """FX filter: 20-day avg daily notional >= $100M."""
         adv = self._fund.get_as_of(canonical_id, FundamentalsStore.METRIC_ADV_20D, as_of_ns)
         if adv is None:
             return False
         return adv.value >= self._filters.fx_daily_notional_min
 
     def _check_commodity(self, canonical_id: int, as_of_ns: int) -> bool:
-        """Commodity filter: 20-day avg OI >= 5,000 contracts."""
         oi = self._fund.get_as_of(
             canonical_id, FundamentalsStore.METRIC_OPEN_INTEREST, as_of_ns
         )
@@ -208,13 +178,11 @@ class UniverseManager:
     # ── Snapshot storage ─────────────────────────────────────────────────
 
     def save_snapshot(self, snapshot: UniverseSnapshot) -> None:
-        """Save a universe snapshot to the tick store metadata library."""
         key = f"{self.SNAPSHOT_KEY_PREFIX}{snapshot.date_ns}"
         self._ts.write_metadata(key, snapshot.to_dataframe())
         logger.debug("Saved universe snapshot: %s (%d instruments)", key, snapshot.count)
 
     def load_snapshot(self, date_ns: int) -> UniverseSnapshot | None:
-        """Load a universe snapshot for a specific date."""
         key = f"{self.SNAPSHOT_KEY_PREFIX}{date_ns}"
         df = self._ts.read_metadata(key)
         if df.empty:
@@ -227,10 +195,6 @@ class UniverseManager:
         )
 
     def load_nearest_snapshot(self, date_ns: int) -> UniverseSnapshot | None:
-        """Load the most recent universe snapshot on or before date_ns.
-
-        Used by backtester for point-in-time universe queries.
-        """
         # List all universe snapshots from metadata
         lib = self._ts._lib("metadata")
         all_keys = lib.list_symbols()
@@ -258,7 +222,6 @@ class UniverseManager:
     def get_universe_diff(
         self, date_ns_old: int, date_ns_new: int
     ) -> tuple[list[int], list[int]]:
-        """Compare two universe snapshots. Returns (added, removed) symbol_ids."""
         old = self.load_snapshot(date_ns_old)
         new = self.load_snapshot(date_ns_new)
         if old is None or new is None:

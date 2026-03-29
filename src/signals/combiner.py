@@ -1,4 +1,3 @@
-"""Signal combiner: weighted ensemble with rolling Sharpe rebalancing."""
 
 from __future__ import annotations
 
@@ -9,7 +8,6 @@ import numpy as np
 import pandas as pd
 
 from src.signals.base import SignalModel, msv_to_features
-
 
 # ── Lead-lag pairs ───────────────────────────────────────────
 
@@ -24,27 +22,20 @@ LEAD_LAG_PAIRS = [
     ("EURUSD", "GBPUSD", 30, 1.5),
 ]
 
-
 def lead_lag_impulse(
     leader_zscore: float,
     elapsed_ms: float,
     tau_ms: float,
     threshold: float = 1.5,
 ) -> float:
-    """Compute lead-lag impulse with exponential decay.
-
-    Returns signal strength in [-1, 1].
-    """
     if abs(leader_zscore) < threshold:
         return 0.0
     decay = math.exp(-elapsed_ms / tau_ms) if tau_ms > 0 else 0.0
     return max(-1.0, min(1.0, leader_zscore * decay))
 
-
 # ── Signal combiner ─────────────────────────────────────────
 
 class SignalCombiner:
-    """Weighted ensemble of signal models with rolling Sharpe rebalancing."""
 
     def __init__(
         self,
@@ -67,10 +58,6 @@ class SignalCombiner:
         return str(id(signal))
 
     def update_weights(self, recent_pnl_by_signal: Dict[str, pd.Series]):
-        """Recompute weights proportional to rolling Sharpe.
-
-        Non-performing signals (Sharpe <= 0) get weight 0.
-        """
         sharpes = {}
         for key, pnl in recent_pnl_by_signal.items():
             if len(pnl) < 2:
@@ -84,10 +71,6 @@ class SignalCombiner:
         self.weights = {k: sharpes.get(k, 0.0) / total for k in self.weights}
 
     def combine(self, msv) -> float:
-        """Combine all signals for a single MSV.
-
-        Returns aggregated score.
-        """
         if not getattr(msv, "valid", False):
             return 0.0
 
@@ -114,14 +97,6 @@ class SignalCombiner:
         return max(-1.0, min(1.0, score))
 
     def combine_multi(self, msvs: dict) -> Dict[int, float]:
-        """Combine signals for multiple symbols.
-
-        Args:
-            msvs: Dict of symbol_id -> MSV.
-
-        Returns:
-            Dict of symbol_id -> combined score.
-        """
         results = {}
         for symbol_id, msv in msvs.items():
             results[symbol_id] = self.combine(msv)

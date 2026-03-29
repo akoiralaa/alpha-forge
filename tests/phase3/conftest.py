@@ -1,4 +1,3 @@
-"""Phase 3 test fixtures — Backtester."""
 
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ sys.path.insert(0, str(build_dir))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from engine import FeatureEngine, FeatureEngineConfig, Tick
-
 
 def make_tick(
     symbol_id: int = 1,
@@ -35,7 +33,6 @@ def make_tick(
     t.last_size = size
     return t
 
-
 def generate_tick_series(
     n: int = 1000,
     symbol_id: int = 1,
@@ -45,7 +42,6 @@ def generate_tick_series(
     spread: float = 0.02,
     seed: int = 42,
 ) -> list[Tick]:
-    """Generate a synthetic tick series with random walk prices."""
     rng = np.random.default_rng(seed)
     prices = [start_price]
     for i in range(1, n):
@@ -63,13 +59,11 @@ def generate_tick_series(
         ))
     return ticks
 
-
 @pytest.fixture
 def default_engine():
     cfg = FeatureEngineConfig()
     cfg.warmup_ticks = 50
     return FeatureEngine(cfg)
-
 
 @pytest.fixture
 def tick_series():

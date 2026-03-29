@@ -1,4 +1,3 @@
-"""Phase 6 validation gate — Regime detection: GMM + HMM + SmoothedPosterior + REGIME_PARAMS."""
 
 from __future__ import annotations
 
@@ -11,12 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 results: list[tuple[str, bool, str]] = []
 
-
 def gate(name: str, passed: bool, detail: str = ""):
     tag = "PASS" if passed else "FAIL"
     results.append((name, passed, detail))
     print(f"  [{tag}] {name}" + (f" — {detail}" if detail else ""))
-
 
 def make_5regime_data(rng, n_per=150):
     r0 = rng.multivariate_normal([0.005, 0.001, 0.01, 1.0], np.diag([0.001, 0.0002, 0.001, 0.05]) ** 2, n_per)
@@ -27,7 +24,6 @@ def make_5regime_data(rng, n_per=150):
     X = np.vstack([r0, r1, r2, r3, r4])
     labels = np.concatenate([np.full(n_per, i) for i in range(5)])
     return X, labels
-
 
 rng = np.random.default_rng(42)
 X, true_labels = make_5regime_data(rng)
@@ -45,7 +41,6 @@ gate("gmm_5regime_classification",
      all_valid and len(labels_seen) >= 3,
      f"labels_seen={labels_seen}")
 
-
 # ── 2. GMM BIC model selection ──────────────────────────────────
 
 gmm1 = GMMRegimeDetector(n_regimes=1).fit(X)
@@ -54,7 +49,6 @@ bic5 = gmm.bic(X)
 gate("gmm_bic_model_selection",
      bic5 < bic1,
      f"BIC(k=5)={bic5:.0f} < BIC(k=1)={bic1:.0f}")
-
 
 # ── 3. HMM transition matrix valid ─────────────────────────────
 
@@ -68,7 +62,6 @@ all_positive = (T >= 0).all()
 gate("hmm_transition_matrix",
      rows_valid and all_positive,
      f"rows_sum_1={rows_valid}, all_positive={all_positive}")
-
 
 # ── 4. SmoothedRegimePosterior transition smoothing ─────────────
 
@@ -94,7 +87,6 @@ gate("transition_smoothing_rate",
      switches < 6,
      f"switches={switches} (limit=6 for oscillating input)")
 
-
 # ── 5. REGIME_PARAMS parameter switching ────────────────────────
 
 from src.regime.params import REGIME_PARAMS
@@ -115,7 +107,6 @@ gate("parameter_switching",
      crisis_zero and low_vol_full and chaotic_reduced and crisis_reduce_only and chaotic_passive,
      f"crisis_scale={crisis_params.position_size_scalar}, low_vol_scale={low_vol_params.position_size_scalar}, "
      f"chaotic_scale={chaotic_params.position_size_scalar}, crisis_mode={crisis_params.execution_mode}")
-
 
 # ── 6. Tracker crisis position scaling ──────────────────────────
 
@@ -138,7 +129,6 @@ gate("tracker_regime_aware_scaling",
      has_regimes and multiple_params,
      f"high_risk={len(high_risk_states)}, low_risk={len(low_risk_states)}, "
      f"unique_scalars={param_scalars}")
-
 
 # ── Summary ─────────────────────────────────────────────────────
 

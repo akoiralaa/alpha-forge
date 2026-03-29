@@ -1,12 +1,3 @@
-"""Symbol master — central registry tracking the full lifecycle of every instrument.
-
-Every ticker rename, reverse split, merger, delisting, new listing, and corporate
-action is recorded. Data queries resolve canonical_id through the symbol master
-using the query timestamp. Direct ticker string references are forbidden downstream.
-
-Backed by SQLite for simplicity and portability. The symbol master is small relative
-to tick data — millions of rows at most — so SQLite is more than sufficient.
-"""
 
 from __future__ import annotations
 
@@ -21,10 +12,8 @@ from src.data.ingest.base import AssetClass
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass(slots=True)
 class Instrument:
-    """A single instrument record from the symbol master."""
     canonical_id: int
     exchange: str
     ticker: str
@@ -38,13 +27,7 @@ class Instrument:
     dividend_amount: float | None
     underlying_id: int | None     # for derivatives, FK to canonical_id
 
-
 class SymbolMaster:
-    """SQLite-backed instrument lifecycle registry.
-
-    Thread-safe via SQLite's built-in locking. All queries resolve through
-    canonical_id — raw ticker strings are never exposed to downstream components.
-    """
 
     SCHEMA_SQL = """
     CREATE TABLE IF NOT EXISTS symbol_master (
@@ -121,10 +104,6 @@ class SymbolMaster:
         underlying_id: int | None = None,
         canonical_id: int | None = None,
     ) -> int:
-        """Add a new instrument or corporate action record.
-
-        Returns the canonical_id assigned.
-        """
         if canonical_id is None:
             canonical_id = self._get_next_id()
 
@@ -162,13 +141,6 @@ class SymbolMaster:
         dividend_amount: float | None = None,
         new_ticker: str | None = None,
     ) -> None:
-        """Record a corporate action for an existing instrument.
-
-        For SPLIT/DIVIDEND: records the action with the ratio/amount.
-        For RENAME: closes the old ticker record and creates a new one.
-        For DELIST: sets valid_to_ns on the instrument.
-        For MERGER: sets valid_to_ns and records the acquiring entity.
-        """
         instrument = self.get_by_id(canonical_id)
         if instrument is None:
             raise ValueError(f"Unknown canonical_id: {canonical_id}")
@@ -251,7 +223,6 @@ class SymbolMaster:
         )
 
     def get_by_id(self, canonical_id: int) -> Instrument | None:
-        """Get the current (most recent) record for a canonical_id."""
         row = self._conn.execute(
             """SELECT * FROM symbol_master
                WHERE canonical_id = ?
@@ -261,10 +232,6 @@ class SymbolMaster:
         return self._row_to_instrument(row) if row else None
 
     def resolve_ticker(self, ticker: str, as_of_ns: int) -> int | None:
-        """Resolve a ticker string to canonical_id at a specific point in time.
-
-        Returns None if the ticker was not active at the given time.
-        """
         row = self._conn.execute(
             """SELECT canonical_id FROM symbol_master
                WHERE ticker = ?
@@ -277,7 +244,6 @@ class SymbolMaster:
         return row["canonical_id"] if row else None
 
     def get_ticker_at(self, canonical_id: int, as_of_ns: int) -> str | None:
-        """Get the ticker that was active for a canonical_id at a point in time."""
         row = self._conn.execute(
             """SELECT ticker FROM symbol_master
                WHERE canonical_id = ?
@@ -290,7 +256,6 @@ class SymbolMaster:
         return row["ticker"] if row else None
 
     def get_splits(self, canonical_id: int) -> list[tuple[int, float]]:
-        """Get all splits for an instrument: list of (effective_ns, split_ratio)."""
         rows = self._conn.execute(
             """SELECT valid_from_ns, split_ratio FROM symbol_master
                WHERE canonical_id = ? AND action_type = 'SPLIT'
@@ -300,7 +265,6 @@ class SymbolMaster:
         return [(r["valid_from_ns"], r["split_ratio"]) for r in rows]
 
     def get_dividends(self, canonical_id: int) -> list[tuple[int, float]]:
-        """Get all dividends for an instrument: list of (effective_ns, amount)."""
         rows = self._conn.execute(
             """SELECT valid_from_ns, dividend_amount FROM symbol_master
                WHERE canonical_id = ? AND action_type = 'DIVIDEND'
@@ -312,7 +276,6 @@ class SymbolMaster:
     def get_corporate_actions(
         self, canonical_id: int, start_ns: int | None = None, end_ns: int | None = None
     ) -> list[Instrument]:
-        """Get all corporate actions for an instrument in a time range."""
         query = """SELECT * FROM symbol_master
                    WHERE canonical_id = ? AND action_type IS NOT NULL"""
         params: list = [canonical_id]
@@ -333,11 +296,6 @@ class SymbolMaster:
         as_of_ns: int,
         asset_class: AssetClass | None = None,
     ) -> list[Instrument]:
-        """Get all instruments that were active at a point in time.
-
-        This is the survivorship-bias-free universe query. It returns instruments
-        that existed at as_of_ns, including those that were later delisted.
-        """
         query = """SELECT * FROM symbol_master
                    WHERE valid_from_ns <= ?
                      AND (valid_to_ns IS NULL OR valid_to_ns > ?)
@@ -355,10 +313,6 @@ class SymbolMaster:
         existed_at_ns: int,
         delisted_before_ns: int,
     ) -> list[Instrument]:
-        """Get instruments that existed at existed_at_ns but were delisted before delisted_before_ns.
-
-        Used for survivorship bias verification.
-        """
         rows = self._conn.execute(
             """SELECT * FROM symbol_master
                WHERE valid_from_ns <= ?
@@ -371,12 +325,10 @@ class SymbolMaster:
         return [self._row_to_instrument(r) for r in rows]
 
     def count_all(self) -> int:
-        """Total number of records in the symbol master."""
         row = self._conn.execute("SELECT COUNT(*) FROM symbol_master").fetchone()
         return row[0]
 
     def count_active(self, as_of_ns: int | None = None) -> int:
-        """Count active instruments, optionally at a point in time."""
         if as_of_ns is None:
             row = self._conn.execute(
                 "SELECT COUNT(DISTINCT canonical_id) FROM symbol_master WHERE valid_to_ns IS NULL"
@@ -391,6 +343,5 @@ class SymbolMaster:
         return row[0]
 
     def to_dataframe(self) -> pd.DataFrame:
-        """Export entire symbol master as a DataFrame."""
         return pd.read_sql("SELECT * FROM symbol_master ORDER BY canonical_id, valid_from_ns",
                            self._conn)

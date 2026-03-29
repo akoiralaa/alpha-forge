@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""Historical data ingestion via Interactive Brokers.
-
-Connects to IB Gateway, loads historical bars for all instruments in the
-build protocol universe, populates the symbol master, and runs data through
-the quality pipeline into ArcticDB.
-
-Usage:
-    python scripts/ingest_historical.py [--years 5] [--bar-size 1day]
-"""
 
 from __future__ import annotations
 
@@ -121,13 +112,10 @@ FUTURES = {
     "ZF": ("CBOT", "USD", "FIXEDINCOME"),
 }
 
-
 def _datetime_to_ns(dt: datetime) -> int:
     return int(dt.timestamp() * 1_000_000_000)
 
-
 def _bars_to_tick_df(bars, symbol_id: int) -> pd.DataFrame:
-    """Convert IB bar data to our tick DataFrame schema."""
     if not bars:
         return pd.DataFrame()
 
@@ -161,7 +149,6 @@ def _bars_to_tick_df(bars, symbol_id: int) -> pd.DataFrame:
         df[col] = df[col].astype(dtype)
     return df
 
-
 class Ingester:
     def __init__(self, data_dir: str, years: int = 5, bar_size: str = "1 day"):
         self.data_dir = Path(data_dir).expanduser().resolve()
@@ -190,7 +177,6 @@ class Ingester:
         self.fund.close()
 
     def _fetch_bars(self, contract, what_to_show="TRADES") -> list:
-        """Fetch historical bars with IB rate limit handling."""
         end_dt = datetime.now(timezone.utc)
         duration = f"{self.years} Y"
 
@@ -212,7 +198,6 @@ class Ingester:
             return []
 
     def ingest_equities_and_etfs(self):
-        """Load equities and ETFs from IB."""
         logger.info("=== Ingesting equities & ETFs (%d symbols) ===", len(INSTRUMENTS))
 
         for ticker, (ac, exchange, currency, sector) in INSTRUMENTS.items():
@@ -287,7 +272,6 @@ class Ingester:
                 ))
 
     def ingest_delisted(self):
-        """Register delisted instruments for survivorship bias compliance."""
         logger.info("=== Registering %d delisted instruments ===", len(DELISTED_INSTRUMENTS))
 
         for ticker, (ac, exchange, currency, sector, ipo_year, delist_year) in DELISTED_INSTRUMENTS.items():
@@ -305,7 +289,6 @@ class Ingester:
             logger.info("  Registered delisted: %s (id=%d, %d-%d)", ticker, cid, ipo_year, delist_year)
 
     def ingest_fx(self):
-        """Load FX pairs from IB."""
         logger.info("=== Ingesting FX pairs (%d pairs) ===", len(FX_PAIRS))
 
         for pair_name, (base, quote) in FX_PAIRS.items():
@@ -357,7 +340,6 @@ class Ingester:
             ))
 
     def ingest_futures(self):
-        """Load futures from IB."""
         logger.info("=== Ingesting futures (%d symbols) ===", len(FUTURES))
 
         for symbol, (exchange, currency, sector) in FUTURES.items():
@@ -433,7 +415,6 @@ class Ingester:
             ))
 
     def add_synthetic_fundamentals_for_pit(self):
-        """Add some historical EPS records for PIT validation gate test."""
         logger.info("=== Adding synthetic PIT fundamental data ===")
 
         # Find first equity in symbol master
@@ -479,7 +460,6 @@ class Ingester:
         logger.info("  Added PIT EPS data for symbol %d", cid)
 
     def add_known_splits(self):
-        """Register well-known stock splits for adjustment validation."""
         logger.info("=== Registering known splits ===")
 
         # AAPL 4:1 split Aug 2020
@@ -515,7 +495,6 @@ class Ingester:
             logger.info("  GOOGL 20:1 split registered")
 
     def run(self):
-        """Full ingestion pipeline."""
         self.connect()
         try:
             self.ingest_equities_and_etfs()
@@ -536,7 +515,6 @@ class Ingester:
         finally:
             self.disconnect()
 
-
 def main():
     parser = argparse.ArgumentParser(description="Historical data ingestion via IB")
     parser.add_argument("--years", type=int, default=5, help="Years of history to fetch")
@@ -546,7 +524,6 @@ def main():
 
     ingester = Ingester(data_dir=args.data_dir, years=args.years, bar_size=args.bar_size)
     ingester.run()
-
 
 if __name__ == "__main__":
     main()

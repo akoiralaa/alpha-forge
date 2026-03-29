@@ -1,4 +1,3 @@
-"""Tests for the data quality pipeline."""
 
 import pytest
 
@@ -6,10 +5,8 @@ from src.data.ingest.base import Tick, date_to_ns
 from src.data.quality_pipeline import DataQualityPipeline, RejectionReason
 from tests.phase1.conftest import make_tick, make_tick_series
 
-
 class TestDataQualityPipeline:
     def _warmup(self, pipeline: DataQualityPipeline, symbol_id: int = 1, n: int = 200):
-        """Feed enough good ticks to establish rolling statistics."""
         base = date_to_ns(2024, 1, 2)
         for i in range(n):
             tick = make_tick(

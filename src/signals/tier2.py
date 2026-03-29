@@ -1,8 +1,3 @@
-"""Tier 2: Statistical signal models.
-
-All implement the SignalModel protocol: fit, predict, predict_proba, feature_importance.
-Trained with time-series cross-validation only. No shuffle.
-"""
 
 from __future__ import annotations
 
@@ -14,9 +9,7 @@ from sklearn.model_selection import TimeSeriesSplit
 
 from src.signals.base import UNIVERSAL_FEATURES
 
-
 class LassoSignal:
-    """Lasso regression with time-series CV for alpha selection."""
 
     name = "lasso"
 
@@ -46,9 +39,7 @@ class LassoSignal:
         return {self._feature_names[i]: float(abs(coefs[i]))
                 for i in range(min(len(coefs), len(self._feature_names)))}
 
-
 class RidgeSignal:
-    """Ridge regression signal."""
 
     name = "ridge"
 
@@ -78,9 +69,7 @@ class RidgeSignal:
         return {self._feature_names[i]: float(abs(coefs[i]))
                 for i in range(min(len(coefs), len(self._feature_names)))}
 
-
 class ElasticNetSignal:
-    """ElasticNet regression signal."""
 
     name = "elasticnet"
 
@@ -109,9 +98,7 @@ class ElasticNetSignal:
         return {self._feature_names[i]: float(abs(coefs[i]))
                 for i in range(min(len(coefs), len(self._feature_names)))}
 
-
 class ARSignal:
-    """Autoregressive AR(p) signal on return series."""
 
     name = "ar"
 
@@ -121,7 +108,6 @@ class ARSignal:
         self._intercept = 0.0
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        """Fit AR(p) on y (return series). X is ignored (uses lags of y)."""
         if len(y) < self.p + 10:
             return
         # Build lag matrix
@@ -137,7 +123,6 @@ class ARSignal:
             self._coefs = None
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        """X should have shape (n, p) where columns are lag_1 ... lag_p of returns."""
         if self._coefs is None:
             return np.zeros(X.shape[0])
         if X.ndim == 1:
@@ -155,9 +140,7 @@ class ARSignal:
             return {}
         return {f"lag_{i+1}": float(abs(c)) for i, c in enumerate(self._coefs)}
 
-
 class PairsTradingSignal:
-    """Pairs trading via spread Z-score between two instruments."""
 
     name = "pairs"
 
@@ -170,10 +153,6 @@ class PairsTradingSignal:
         self._fitted = False
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        """X[:, 0] = asset A prices, X[:, 1] = asset B prices, y is ignored.
-
-        Fits hedge ratio via OLS and computes spread statistics.
-        """
         if X.shape[1] < 2 or len(X) < 20:
             return
         a, b = X[:, 0], X[:, 1]
@@ -189,10 +168,6 @@ class PairsTradingSignal:
         self._fitted = True
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        """X[:, 0] = current A price, X[:, 1] = current B price.
-
-        Returns spread Z-score as signal (negative z = long A short B).
-        """
         if not self._fitted:
             return np.zeros(X.shape[0])
         a, b = X[:, 0], X[:, 1]
@@ -209,7 +184,6 @@ class PairsTradingSignal:
         return {"hedge_ratio": abs(self._hedge_ratio),
                 "spread_mean": abs(self._spread_mean),
                 "spread_std": self._spread_std}
-
 
 TIER2_MODELS = {
     "lasso": LassoSignal,

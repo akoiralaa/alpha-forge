@@ -1,10 +1,8 @@
-"""Tests for point-in-time fundamental data store."""
 
 import pytest
 
 from src.data.fundamentals import FundamentalRecord, FundamentalsStore
 from src.data.ingest.base import date_to_ns
-
 
 class TestFundamentalsStore:
     def test_add_and_retrieve(self, fundamentals: FundamentalsStore):
@@ -24,7 +22,6 @@ class TestFundamentalsStore:
         assert result.published_at_ns == date_to_ns(2019, 4, 15)
 
     def test_pit_integrity_no_lookahead(self, fundamentals: FundamentalsStore):
-        """The critical PIT test: querying before publication returns nothing."""
         record = FundamentalRecord(
             canonical_id=1,
             metric_name="EPS",
@@ -40,7 +37,6 @@ class TestFundamentalsStore:
         assert result is None
 
     def test_pit_returns_latest_known(self, fundamentals: FundamentalsStore):
-        """Multiple publications: as-of query returns the most recent known value."""
         # Q4 2018 EPS published Jan 2019
         fundamentals.add_record(FundamentalRecord(
             canonical_id=1, metric_name="EPS", value=2.80,
@@ -74,7 +70,6 @@ class TestFundamentalsStore:
         assert result.value == 3.80
 
     def test_restated_values_dont_leak(self, fundamentals: FundamentalsStore):
-        """A restated value published later should not appear in earlier queries."""
         # Original Q1 EPS published Apr 15
         fundamentals.add_record(FundamentalRecord(
             canonical_id=1, metric_name="EPS", value=3.50,

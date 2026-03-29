@@ -1,9 +1,3 @@
-"""Base data provider interface and canonical Tick schema.
-
-Every data point in the system flows through this schema. The Tick dataclass
-is the single source of truth for what a market event looks like — it matches
-the build protocol's schema exactly.
-"""
 
 from __future__ import annotations
 
@@ -15,7 +9,6 @@ from typing import Iterator
 import numpy as np
 import pandas as pd
 
-
 class AssetClass(enum.Enum):
     EQUITY = "EQUITY"
     FUTURE = "FUTURE"
@@ -25,9 +18,7 @@ class AssetClass(enum.Enum):
     ETF = "ETF"
     VOLATILITY = "VOLATILITY"
 
-
 class TradeCondition(enum.IntEnum):
-    """Trade condition flags matching exchange convention."""
     REGULAR = 0
     ODD_LOT = 1
     FORM_T = 2          # extended hours
@@ -40,14 +31,8 @@ class TradeCondition(enum.IntEnum):
     CORRECTED = 9
     UNKNOWN = 255
 
-
 @dataclass(slots=True, frozen=True)
 class Tick:
-    """Canonical tick record — matches build protocol schema exactly.
-
-    All timestamps in nanoseconds since Unix epoch, UTC. No exceptions.
-    All prices in the instrument's native currency.
-    """
     exchange_time_ns: int          # when exchange matching engine processed the event
     capture_time_ns: int           # when our system received the packet
     symbol_id: int                 # canonical ID from symbol master, never raw ticker
@@ -90,7 +75,6 @@ class Tick:
 
     @staticmethod
     def schema_dtypes() -> dict[str, np.dtype]:
-        """Column dtypes for DataFrame/ArcticDB storage."""
         return {
             "exchange_time_ns": np.dtype("int64"),
             "capture_time_ns": np.dtype("int64"),
@@ -106,7 +90,6 @@ class Tick:
 
     @staticmethod
     def ticks_to_dataframe(ticks: list[Tick]) -> pd.DataFrame:
-        """Convert a list of Ticks to a DataFrame with correct dtypes."""
         if not ticks:
             return pd.DataFrame(columns=list(Tick.schema_dtypes().keys())).astype(
                 Tick.schema_dtypes()
@@ -117,10 +100,8 @@ class Tick:
             df[col] = df[col].astype(dtype)
         return df
 
-
 @dataclass
 class ProviderConfig:
-    """Configuration for a data provider."""
     api_key: str = ""
     api_secret: str = ""
     host: str = ""
@@ -128,14 +109,7 @@ class ProviderConfig:
     paper: bool = True
     rate_limit_per_minute: int = 200
 
-
 class DataProvider(ABC):
-    """Abstract base for all data providers.
-
-    Concrete implementations: IBKRProvider, PolygonProvider, AlpacaProvider.
-    The ingestion pipeline calls these methods and converts results to Ticks
-    before passing to the quality pipeline and tick store.
-    """
 
     def __init__(self, config: ProviderConfig):
         self.config = config
@@ -143,11 +117,9 @@ class DataProvider(ABC):
 
     @abstractmethod
     def connect(self) -> None:
-        """Establish connection to the data provider."""
 
     @abstractmethod
     def disconnect(self) -> None:
-        """Clean disconnect."""
 
     @abstractmethod
     def get_historical_bars(
@@ -158,12 +130,6 @@ class DataProvider(ABC):
         end_ns: int,
         bar_size: str = "1min",
     ) -> pd.DataFrame:
-        """Fetch historical OHLCV bars.
-
-        Returns DataFrame with columns:
-            timestamp_ns, open, high, low, close, volume, vwap
-        All timestamps in nanoseconds UTC.
-        """
 
     @abstractmethod
     def get_historical_ticks(
@@ -173,7 +139,6 @@ class DataProvider(ABC):
         start_ns: int,
         end_ns: int,
     ) -> Iterator[Tick]:
-        """Fetch historical tick data. Yields Tick objects in chronological order."""
 
     @abstractmethod
     def stream_ticks(
@@ -181,7 +146,6 @@ class DataProvider(ABC):
         symbols: list[str],
         asset_class: AssetClass,
     ) -> Iterator[Tick]:
-        """Subscribe to live tick stream. Yields Ticks as they arrive."""
 
     @abstractmethod
     def get_instrument_info(
@@ -189,7 +153,6 @@ class DataProvider(ABC):
         symbol: str,
         asset_class: AssetClass,
     ) -> dict:
-        """Get instrument metadata: exchange, currency, contract details, etc."""
 
     @abstractmethod
     def get_corporate_actions(
@@ -198,21 +161,16 @@ class DataProvider(ABC):
         start_ns: int,
         end_ns: int,
     ) -> list[dict]:
-        """Fetch splits, dividends, mergers, renames for a symbol in date range."""
 
     @property
     def is_connected(self) -> bool:
         return self._connected
 
-
 def ns_now() -> int:
-    """Current time in nanoseconds since Unix epoch, UTC."""
     import time
     return int(time.time_ns())
 
-
 def date_to_ns(year: int, month: int, day: int) -> int:
-    """Convert a date to nanoseconds since Unix epoch, UTC."""
     import datetime
     dt = datetime.datetime(year, month, day, tzinfo=datetime.timezone.utc)
     return int(dt.timestamp() * 1_000_000_000)

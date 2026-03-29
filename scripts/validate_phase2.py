@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""Phase 2 Validation Gate — C++20 Feature Engine.
-
-Assertions (from build protocol):
-1. msv_field_coverage: MSV has all universal + asset-specific fields
-2. welford_numerical_accuracy: Online stats match numpy within 1e-9
-3. circular_buffer_correctness: FIFO ordering, no stale data after wrap
-4. warmup_behavior: MSV.valid == False until warmup_ticks processed
-5. deterministic_replay: Same tick sequence → bit-identical MSV output
-6. pybind11_roundtrip: Python→C++→Python tick yields identical MSV to pure C++
-7. throughput_benchmark: >= 1M ticks/sec single-threaded
-"""
 
 from __future__ import annotations
 
@@ -74,7 +63,6 @@ class ValidationReport:
         print(f"\nReport saved: {path}")
         return all_pass
 
-
 def make_tick(sym: int, ts_ns: int, price: float,
               size: int = 100, spread: float = 0.02) -> Tick:
     t = Tick()
@@ -88,7 +76,6 @@ def make_tick(sym: int, ts_ns: int, price: float,
     t.last_price = price
     t.last_size = size
     return t
-
 
 report = ValidationReport(phase=2)
 print("Phase 2 Validation Gate — C++20 Feature Engine")

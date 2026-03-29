@@ -1,4 +1,3 @@
-"""Phase 8 validation gate — Monitoring: metrics, health, alerting."""
 
 from __future__ import annotations
 
@@ -9,12 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 results: list[tuple[str, bool, str]] = []
 
-
 def gate(name: str, passed: bool, detail: str = ""):
     tag = "PASS" if passed else "FAIL"
     results.append((name, passed, detail))
     print(f"  [{tag}] {name}" + (f" — {detail}" if detail else ""))
-
 
 # ── 1. Prometheus metrics exposition ───────────────────────────
 
@@ -36,7 +33,6 @@ gate("prometheus_exposition",
      has_nav and has_dd and has_ticks and len(snap) > 500,
      f"snapshot={len(snap)} bytes, nav={has_nav}, dd={has_dd}, ticks={has_ticks}")
 
-
 # ── 2. Metric isolation ───────────────────────────────────────
 
 m1 = TradingMetrics()
@@ -48,7 +44,6 @@ isolated = m1.nav._value.get() == 100 and m2.nav._value.get() == 999
 gate("metric_isolation",
      isolated,
      f"m1.nav={m1.nav._value.get()}, m2.nav={m2.nav._value.get()}")
-
 
 # ── 3. Health check aggregation ───────────────────────────────
 
@@ -71,7 +66,6 @@ gate("health_check_aggregation",
      all_healthy and detects_failure,
      f"3_healthy={all_healthy}, detects_failure={detects_failure}")
 
-
 # ── 4. Alert threshold firing ─────────────────────────────────
 
 from src.monitoring.alerting import AlertManager, AlertRule, AlertSeverity
@@ -91,7 +85,6 @@ gate("alert_threshold_firing",
      len(no_fire) == 0 and len(warn_fire) == 1 and len(crit_fire) == 2,
      f"below=0, warn={len(warn_fire)}, crit={len(crit_fire)}")
 
-
 # ── 5. Alert cooldown ────────────────────────────────────────
 
 am2 = AlertManager()
@@ -103,7 +96,6 @@ second = am2.evaluate("x", 2)  # suppressed by cooldown
 gate("alert_cooldown",
      len(first) == 1 and len(second) == 0,
      f"first={len(first)}, suppressed={len(second)}")
-
 
 # ── 6. Alert handler dispatch ────────────────────────────────
 
@@ -117,7 +109,6 @@ handler_ok = len(received) == 1 and received[0].severity == AlertSeverity.CRITIC
 gate("alert_handler_dispatch",
      handler_ok,
      f"handler_received={len(received)}, severity={received[0].severity.name if received else 'N/A'}")
-
 
 # ── 7. HFT metrics all exist ─────────────────────────────────
 
@@ -166,7 +157,6 @@ gate("all_hft_metrics_exist",
      len(missing) == 0,
      f"checked={len(required_metrics)}, missing={missing[:5] if missing else 'none'}")
 
-
 # ── 8. HFT alert rules ──────────────────────────────────────
 
 from src.monitoring.alerting import hft_alert_rules
@@ -184,7 +174,6 @@ gate("hft_alert_rules_defined",
      has_all and len(hft_rules) >= 10,
      f"rules={len(hft_rules)}, missing={expected_rules - rule_names}")
 
-
 # ── 9. Signal decay down-weights ────────────────────────────
 
 am_decay = AlertManager()
@@ -197,7 +186,6 @@ gate("signal_decay_alert_fires",
      decay_fired,
      f"fired={decay_fired}, sharpe=-0.5")
 
-
 # ── 10. Feature drift detected ──────────────────────────────
 
 am_drift = AlertManager()
@@ -209,7 +197,6 @@ drift_fired = len(drift_alerts) == 1
 gate("feature_drift_alert_fires",
      drift_fired,
      f"fired={drift_fired}, kl=0.8")
-
 
 # ── Summary ─────────────────────────────────────────────────────
 
