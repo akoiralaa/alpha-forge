@@ -8,10 +8,12 @@ version = "0.1.0"
 description = "Cross-asset algorithmic trading platform"
 requires-python = ">=3.12"
 dependencies = [
-    # Phase 1: Data Layer
+    # Phase 1: Data Layer (IBKR + Polygon + Alpaca)
     "arcticdb>=4.5.0",
     "ib_async>=1.0.0",
     "polygon-api-client>=1.13.0",
+    "alpaca-py>=0.28.0",
+    "python-dotenv>=1.0",
     "sqlalchemy>=2.0",
     "pandas>=2.2",
     "numpy>=1.26",

@@ -61,11 +61,23 @@ class IBKRProvider(DataProvider):
         self._connected = False
         logger.info("Disconnected from IB")
 
+    # Exchange map for futures — IB requires the correct exchange
+    _EXCHANGE_MAP = {
+        "CL": "NYMEX", "NG": "NYMEX",
+        "HG": "COMEX", "GC": "COMEX", "SI": "COMEX",
+        "ZC": "CBOT", "ZW": "CBOT", "ZS": "CBOT",
+        "ZN": "CBOT", "ZB": "CBOT", "ZF": "CBOT", "ZT": "CBOT",
+        "YM": "CBOT",
+        "ES": "CME", "NQ": "CME", "RTY": "CME",
+        "GE": "CME",
+        "VX": "CFE",
+    }
+
     def _make_contract(self, symbol: str, asset_class: AssetClass):
         try:
-            from ib_async import Contract, Forex, Future, Stock
+            from ib_async import ContFuture, Contract, Forex, Future, Stock
         except ImportError:
-            from ib_insync import Contract, Forex, Future, Stock
+            from ib_insync import ContFuture, Contract, Forex, Future, Stock
 
         cache_key = f"{symbol}:{asset_class.value}"
         if cache_key in self._contracts_cache:
@@ -75,21 +87,18 @@ class IBKRProvider(DataProvider):
         if asset_class in (AssetClass.EQUITY, AssetClass.ETF):
             contract = Stock(symbol, "SMART", "USD")
         elif asset_class == AssetClass.FX:
-            # FX pairs like EURUSD -> Forex('EUR', 'USD')
             if len(symbol) == 6:
                 contract = Forex(symbol[:3] + symbol[3:])
             else:
                 contract = Forex(symbol)
-        elif asset_class in (AssetClass.FUTURE, AssetClass.COMMODITY, AssetClass.VOLATILITY):
-            # Futures: use front month by default
-            contract = Future(symbol, exchange="CME")
-        elif asset_class == AssetClass.BOND:
-            contract = Future(symbol, exchange="CME")
+        elif asset_class in (AssetClass.FUTURE, AssetClass.COMMODITY, AssetClass.VOLATILITY, AssetClass.BOND):
+            # Use ContFuture for continuous futures (auto-resolves to front month)
+            exchange = self._EXCHANGE_MAP.get(symbol, "CME")
+            contract = ContFuture(symbol, exchange=exchange)
         else:
             contract = Stock(symbol, "SMART", "USD")
 
         if contract is not None:
-            # Qualify to get full contract details
             try:
                 qualified = self._ib.qualifyContracts(contract)
                 if qualified:
@@ -112,10 +121,6 @@ class IBKRProvider(DataProvider):
         if contract is None:
             return pd.DataFrame()
 
-        end_dt = _ns_to_datetime(end_ns)
-        start_dt = _ns_to_datetime(start_ns)
-        duration_days = (end_dt - start_dt).days + 1
-
         # Map our bar_size to IB format
         ib_bar_size = {
             "1min": "1 min",
@@ -125,33 +130,58 @@ class IBKRProvider(DataProvider):
             "1day": "1 day",
         }.get(bar_size, "1 min")
 
-        # IB duration string
-        if duration_days <= 1:
-            duration_str = "1 D"
-        elif duration_days <= 30:
-            duration_str = f"{duration_days} D"
-        elif duration_days <= 365:
-            months = duration_days // 30
-            duration_str = f"{months} M"
-        else:
-            years = duration_days // 365
-            duration_str = f"{years} Y"
-
         what_to_show = "TRADES" if asset_class != AssetClass.FX else "MIDPOINT"
 
-        try:
-            bars = self._ib.reqHistoricalData(
-                contract,
-                endDateTime=end_dt,
-                durationStr=duration_str,
-                barSizeSetting=ib_bar_size,
-                whatToShow=what_to_show,
-                useRTH=False,  # Include extended hours
-                formatDate=2,  # UTC timestamps
-            )
-            time.sleep(IB_RATE_LIMIT_SLEEP)
-        except Exception as e:
-            logger.error("Failed to fetch bars for %s: %s", symbol, e)
+        # For daily bars, try max history with fallback durations
+        if bar_size == "1day":
+            is_equity = asset_class in (AssetClass.EQUITY, AssetClass.ETF)
+            durations = ["20 Y", "10 Y", "5 Y", "2 Y", "1 Y"] if is_equity else ["10 Y", "5 Y", "2 Y", "1 Y"]
+        else:
+            end_dt = _ns_to_datetime(end_ns)
+            start_dt = _ns_to_datetime(start_ns)
+            duration_days = (end_dt - start_dt).days + 1
+            if duration_days <= 1:
+                durations = ["1 D"]
+            elif duration_days <= 30:
+                durations = [f"{duration_days} D"]
+            elif duration_days <= 365:
+                durations = [f"{duration_days // 30} M"]
+            else:
+                durations = [f"{duration_days // 365} Y"]
+
+        bars = None
+        for dur in durations:
+            try:
+                bars = self._ib.reqHistoricalData(
+                    contract,
+                    endDateTime="",
+                    durationStr=dur,
+                    barSizeSetting=ib_bar_size,
+                    whatToShow=what_to_show,
+                    useRTH=True,
+                    formatDate=2,
+                )
+                time.sleep(IB_RATE_LIMIT_SLEEP)
+                if bars:
+                    break
+            except Exception as e:
+                logger.debug("Duration %s failed for %s: %s", dur, symbol, e)
+                time.sleep(IB_RATE_LIMIT_SLEEP)
+
+        if not bars:
+            try:
+                bars = self._ib.reqHistoricalData(
+                    contract,
+                    endDateTime="",
+                    durationStr="1 Y",
+                    barSizeSetting=ib_bar_size,
+                    whatToShow=what_to_show,
+                    useRTH=True,
+                    formatDate=2,
+                )
+                time.sleep(IB_RATE_LIMIT_SLEEP)
+            except Exception as e:
+                logger.error("Failed to fetch bars for %s: %s", symbol, e)
             return pd.DataFrame()
 
         if not bars:

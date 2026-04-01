@@ -116,10 +116,10 @@ class DataProvider(ABC):
         self._connected = False
 
     @abstractmethod
-    def connect(self) -> None:
+    def connect(self) -> None: ...
 
     @abstractmethod
-    def disconnect(self) -> None:
+    def disconnect(self) -> None: ...
 
     @abstractmethod
     def get_historical_bars(
@@ -129,7 +129,7 @@ class DataProvider(ABC):
         start_ns: int,
         end_ns: int,
         bar_size: str = "1min",
-    ) -> pd.DataFrame:
+    ) -> pd.DataFrame: ...
 
     @abstractmethod
     def get_historical_ticks(
@@ -138,21 +138,21 @@ class DataProvider(ABC):
         asset_class: AssetClass,
         start_ns: int,
         end_ns: int,
-    ) -> Iterator[Tick]:
+    ) -> Iterator[Tick]: ...
 
     @abstractmethod
     def stream_ticks(
         self,
         symbols: list[str],
         asset_class: AssetClass,
-    ) -> Iterator[Tick]:
+    ) -> Iterator[Tick]: ...
 
     @abstractmethod
     def get_instrument_info(
         self,
         symbol: str,
         asset_class: AssetClass,
-    ) -> dict:
+    ) -> dict: ...
 
     @abstractmethod
     def get_corporate_actions(
@@ -160,7 +160,7 @@ class DataProvider(ABC):
         symbol: str,
         start_ns: int,
         end_ns: int,
-    ) -> list[dict]:
+    ) -> list[dict]: ...
 
     @property
     def is_connected(self) -> bool:

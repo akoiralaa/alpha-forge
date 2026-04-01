@@ -1,10 +1,19 @@
 
-from src.data.arctic_store import TickStore
-from src.data.symbol_master import SymbolMaster
-from src.data.quality_pipeline import DataQualityPipeline
-from src.data.universe import UniverseManager
-from src.data.adjustments import PriceAdjuster
-from src.data.fundamentals import FundamentalsStore
+# Lazy imports — avoids pulling in arcticdb/sqlalchemy when only the ingest layer is needed
+def __getattr__(name):
+    _lazy = {
+        "TickStore": "src.data.arctic_store",
+        "SymbolMaster": "src.data.symbol_master",
+        "DataQualityPipeline": "src.data.quality_pipeline",
+        "UniverseManager": "src.data.universe",
+        "PriceAdjuster": "src.data.adjustments",
+        "FundamentalsStore": "src.data.fundamentals",
+    }
+    if name in _lazy:
+        import importlib
+        mod = importlib.import_module(_lazy[name])
+        return getattr(mod, name)
+    raise AttributeError(f"module 'src.data' has no attribute {name!r}")
 
 __all__ = [
     "TickStore",

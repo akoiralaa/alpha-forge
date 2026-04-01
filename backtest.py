@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import sys
 import time
 from collections import defaultdict
@@ -10,21 +11,30 @@ import numpy as np
 import pandas as pd
 import yaml
 
-try:
-    from ib_async import IB, Stock, Forex, Future
-except ImportError:
-    from ib_insync import IB, Stock, Forex, Future
-
+from src.data.ingest.base import AssetClass
+from src.data.ingest.data_manager import DataManager, build_data_manager_from_env
 from src.paper.engine import PaperConfig, PaperTick, PaperTradingEngine
 from src.portfolio.sizing import compute_position_size
 
 
 ASSET_TYPES = {}
 
+# Map string asset types to AssetClass enum
+_ASSET_CLASS_MAP = {
+    "ETF": AssetClass.ETF,
+    "EQUITY": AssetClass.EQUITY,
+    "FUTURE": AssetClass.FUTURE,
+    "COMMODITY": AssetClass.COMMODITY,
+    "BOND": AssetClass.BOND,
+    "FX": AssetClass.FX,
+    "VOLATILITY": AssetClass.VOLATILITY,
+}
+
 # ── signal weights per asset class ────────────────────────────
 # (trend, momentum, mean_reversion, breakout)
 ASSET_CLASS_WEIGHTS = {
     "ETF":        (0.30, 0.35, 0.20, 0.15),
+    "EQUITY":     (0.25, 0.40, 0.20, 0.15),
     "FUTURE":     (0.35, 0.30, 0.15, 0.20),
     "COMMODITY":  (0.40, 0.30, 0.10, 0.20),
     "BOND":       (0.35, 0.35, 0.20, 0.10),
@@ -43,6 +53,9 @@ def load_universe(config_path):
     for sym in instruments.get("sector_etfs", []):
         universe.append((sym, "ETF"))
         ASSET_TYPES[sym] = "ETF"
+    for sym in instruments.get("equities", []):
+        universe.append((sym, "EQUITY"))
+        ASSET_TYPES[sym] = "EQUITY"
     for sym in instruments.get("equity_index_futures", []):
         universe.append((sym, "FUTURE"))
         ASSET_TYPES[sym] = "FUTURE"
@@ -62,112 +75,10 @@ def load_universe(config_path):
     return universe
 
 
-EXCHANGE_MAP = {
-    "CL": "NYMEX", "NG": "NYMEX", "HG": "COMEX",
-    "GC": "COMEX", "SI": "COMEX",
-    "ZC": "CBOT", "ZW": "CBOT", "ZS": "CBOT",
-    "ZN": "CBOT", "ZB": "CBOT", "ZF": "CBOT", "ZT": "CBOT", "GE": "CME",
-    "ES": "CME", "NQ": "CME", "RTY": "CME", "YM": "CBOT",
-    "VX": "CFE",
-}
-
-
-def make_contract(symbol, asset_type):
-    if asset_type in ("ETF", "EQUITY"):
-        return Stock(symbol, "SMART", "USD")
-    elif asset_type == "FX":
-        return Forex(symbol[:3] + symbol[3:])
-    elif asset_type in ("FUTURE", "COMMODITY", "BOND", "VOLATILITY"):
-        exchange = EXCHANGE_MAP.get(symbol, "CME")
-        return Future(symbol, exchange=exchange, includeExpired=True)
-    return Stock(symbol, "SMART", "USD")
-
-
-def qualify_future(ib, symbol, asset_type):
-    exchange = EXCHANGE_MAP.get(symbol, "CME")
-    try:
-        from ib_async import ContFuture
-    except ImportError:
-        from ib_insync import ContFuture
-
-    contract = ContFuture(symbol, exchange=exchange)
-    try:
-        qualified = ib.qualifyContracts(contract)
-        if qualified:
-            return qualified[0]
-    except Exception:
-        pass
-
-    contract = Future(symbol, exchange=exchange)
-    try:
-        qualified = ib.qualifyContracts(contract)
-        if qualified:
-            return qualified[0]
-    except Exception:
-        pass
-
-    return None
-
-
-def fetch_max_daily(ib, symbol, asset_type):
-    if asset_type in ("FUTURE", "COMMODITY", "BOND", "VOLATILITY"):
-        contract = qualify_future(ib, symbol, asset_type)
-        if contract is None:
-            return pd.DataFrame()
-    else:
-        contract = make_contract(symbol, asset_type)
-        try:
-            qualified = ib.qualifyContracts(contract)
-            if not qualified:
-                return pd.DataFrame()
-            contract = qualified[0]
-        except Exception as e:
-            print(f"    skip {symbol}: {e}")
-            return pd.DataFrame()
-
-    what = "MIDPOINT" if asset_type == "FX" else "TRADES"
-
-    durations = ["20 Y", "10 Y", "5 Y", "2 Y", "1 Y"]
-    if asset_type not in ("ETF", "EQUITY"):
-        durations = ["10 Y", "5 Y", "2 Y", "1 Y"]
-
-    bars = None
-    for dur in durations:
-        try:
-            bars = ib.reqHistoricalData(
-                contract,
-                endDateTime="",
-                durationStr=dur,
-                barSizeSetting="1 day",
-                whatToShow=what,
-                useRTH=True,
-                formatDate=2,
-            )
-            time.sleep(0.5)
-            if bars:
-                break
-        except Exception:
-            time.sleep(0.5)
-            continue
-
-    if not bars:
-        return pd.DataFrame()
-
-    records = []
-    for bar in bars:
-        dt = bar.date if isinstance(bar.date, datetime) else datetime.fromisoformat(str(bar.date))
-        if hasattr(dt, 'tzinfo') and dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        records.append({
-            "date": dt,
-            "open": bar.open,
-            "high": bar.high,
-            "low": bar.low,
-            "close": bar.close,
-            "volume": int(bar.volume) if bar.volume > 0 else 100,
-        })
-
-    return pd.DataFrame(records)
+def fetch_daily_bars(dm: DataManager, symbol: str, asset_type: str) -> pd.DataFrame:
+    """Fetch max daily bars via DataManager with automatic provider fallback."""
+    asset_class = _ASSET_CLASS_MAP.get(asset_type, AssetClass.EQUITY)
+    return dm.fetch_daily_bars(symbol, asset_class)
 
 
 # ── Feature engineering ───────────────────────────────────────
@@ -724,11 +635,18 @@ def run(args):
     universe = load_universe(args.config)
     print(f"Universe: {len(universe)} instruments across {len(set(t for _, t in universe))} asset classes\n")
 
-    print(f"Connecting to IB Gateway at {args.host}:{args.port}...")
-    ib = IB()
-    ib.connect(args.host, args.port, clientId=args.client_id)
-    ib.reqMarketDataType(4)
-    print("Connected\n")
+    print("Connecting data providers...")
+    dm = build_data_manager_from_env()
+    results = dm.connect_all()
+    connected = [k for k, v in results.items() if v]
+    failed = [k for k, v in results.items() if not v]
+    print(f"  Connected: {', '.join(connected) if connected else 'none'}")
+    if failed:
+        print(f"  Failed:    {', '.join(failed)}")
+    if not connected:
+        print("ERROR: No data providers available. Check .env configuration.")
+        sys.exit(1)
+    print()
 
     print("=" * 65)
     print("  FETCHING HISTORICAL DATA")
@@ -741,7 +659,7 @@ def run(args):
     for sym, asset_type in universe:
         sid += 1
         print(f"  [{sid:2d}/{len(universe)}] {sym:8s} ({asset_type:10s}) ", end="", flush=True)
-        df = fetch_max_daily(ib, sym, asset_type)
+        df = fetch_daily_bars(dm, sym, asset_type)
         if df.empty:
             print("-- no data")
             continue
@@ -751,7 +669,7 @@ def run(args):
         all_bars.append((sym, sid, df))
         symbol_info[sym] = {"sid": sid, "type": asset_type, "bars": len(df)}
 
-    ib.disconnect()
+    dm.disconnect_all()
 
     if not all_bars:
         print("\nNo data fetched. Exiting.")
@@ -896,13 +814,17 @@ def run(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multi-factor backtest with vol targeting")
     parser.add_argument("--config", default="config/data_layer.yaml", help="instrument config")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=4002)
-    parser.add_argument("--client-id", type=int, default=2)
+    parser.add_argument("--env", default=".env", help="env file with API keys")
     parser.add_argument("--nav", type=float, default=1_000_000, help="starting capital")
     parser.add_argument("--signal-threshold", type=float, default=0.15, help="min signal to trade")
     parser.add_argument("--slippage", type=float, default=1.0, help="slippage bps")
     parser.add_argument("--kelly", type=float, default=0.25, help="kelly fraction")
     parser.add_argument("--target-vol", type=float, default=0.10, help="target annualized vol")
     args = parser.parse_args()
+
+    # Load env file if it exists
+    if os.path.exists(args.env):
+        from dotenv import load_dotenv
+        load_dotenv(args.env)
+
     run(args)
