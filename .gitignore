@@ -40,6 +40,6 @@ htmlcov/
 .venv/
 venv/
 
-# Claude
+# Editor/tool config
 .claude/
 CLAUDE.md
