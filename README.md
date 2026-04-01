@@ -1,6 +1,6 @@
-# One Brain Fund — Quantitative Trading Platform
+# Quantitative Trading Platform
 
-A Renaissance-style systematic trading engine that ranks stocks cross-sectionally across the S&P 500 using multi-factor signals, constructs sector-neutral portfolios, and manages risk dynamically through volatility regimes and drawdown circuit breakers.
+A systematic trading engine that ranks stocks cross-sectionally across the S&P 500 using multi-factor signals, constructs sector-neutral portfolios, and manages risk dynamically through volatility regimes and drawdown circuit breakers.
 
 ## Backtest Results vs SPY (2007-2026, $10M starting NAV)
 
@@ -219,4 +219,4 @@ python3 backtest_v4.py --no-cache
 2. **Cross-Sectional** — Rank stocks against each other, not against absolute thresholds
 3. **Survival > Returns** — Drawdown circuit breakers are hard constraints
 4. **No Lookahead** — Walk-forward only, all signals use past data
-5. **Institutional Data** — IBKR + Polygon + Alpaca only. Never yfinance.
+5. **Institutional Data** — IBKR + Polygon + Alpaca only.
