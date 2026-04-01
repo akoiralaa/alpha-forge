@@ -24,7 +24,7 @@ A systematic trading engine that ranks stocks cross-sectionally across the S&P 5
 ### v4 Year-by-Year vs SPY
 
 ```
-Year     v4 Ret      SPY    Alpha    v4 DD   SPY DD
+Year   v4 Ret     SPY   Alpha    v4 DD   SPY DD
 ────────────────────────────────────────────────────
 2007    +1.35%  -4.11%  +5.46%   -11.74%  -9.95%
 2008   -29.40% -37.71%  +8.31%   -31.60% -47.92%   ← crash protection
