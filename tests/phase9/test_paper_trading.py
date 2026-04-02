@@ -10,7 +10,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from src.paper.engine import PaperConfig, PaperTick, PaperTradingEngine
+from src.paper.engine import (
+    CapitalDeploymentManager,
+    DeploymentStage,
+    PaperConfig,
+    PaperTick,
+    PaperTradingEngine,
+)
+from src.execution.broker import BrokerOrder
 from src.execution.kill_switch import KillLevel
 from src.execution.wal import OrderState
 
@@ -164,6 +171,16 @@ class TestRiskIntegration:
         assert order.state == OrderState.REJECTED
         assert risk is not None
 
+    def test_risk_uses_live_position_state(self):
+        engine = PaperTradingEngine(PaperConfig(max_position_pct_nav=0.05))
+        engine.broker.set_price(1, 100.0)
+        engine.broker.submit_order(BrokerOrder("SETUP", 1, 1, 400, "MARKET"))
+        engine._update_nav()
+        order, risk = engine.order_manager.submit(
+            1, 1, 200, current_price=100.0, adv_20d=10_000_000)
+        assert order.state == OrderState.REJECTED
+        assert risk is not None
+
 # ── Reconciliation Integration ─────────────────────────────────
 
 class TestReconciliationIntegration:
@@ -221,6 +238,15 @@ class TestMonitoringIntegration:
         # 10% drawdown should trigger warning (>5%) and critical (>=10%)
         assert len(fired) >= 1
 
+    def test_exposure_metrics_updated(self):
+        engine = PaperTradingEngine()
+        engine.broker.set_price(1, 100.0)
+        engine.broker.submit_order(BrokerOrder("SETUP", 1, 1, 100, "MARKET"))
+        engine.on_tick(_make_tick(1, 100.0))
+        assert engine.metrics.gross_exposure._value.get() > 0
+        assert engine.metrics.net_exposure._value.get() > 0
+        assert engine.metrics.kill_switch_level._value.get() == 0
+
 # ── Custom Signal Function ─────────────────────────────────────
 
 class TestCustomSignal:
@@ -258,3 +284,58 @@ class TestStats:
         stats = engine.run_session(ticks)
         expected_pnl = stats.final_nav - engine.config.initial_nav
         assert abs(stats.total_pnl - expected_pnl) < 1.0
+
+
+class TestCapitalDeploymentManager:
+    def test_legacy_ratio_gate_still_works(self):
+        mgr = CapitalDeploymentManager(10_000_000)
+        transition = mgr.can_advance(live_sharpe=0.9, paper_sharpe=1.0)
+        assert transition.allowed
+        assert transition.to_stage == DeploymentStage.LIVE_5PCT
+
+    def test_strict_fund_gate_requires_full_hurdles(self):
+        mgr = CapitalDeploymentManager(10_000_000)
+        transition = mgr.can_advance(
+            live_sharpe=1.15,
+            paper_sharpe=1.20,
+            live_return=0.18,
+            paper_return=0.20,
+            live_max_drawdown=0.08,
+            infrastructure_sharpe=0.90,
+            reconciliation_breaks=0,
+            critical_alerts=0,
+            trading_days=15,
+            enforce_fund_hurdles=True,
+        )
+        assert transition.allowed
+        applied = mgr.advance(
+            live_sharpe=1.15,
+            paper_sharpe=1.20,
+            live_return=0.18,
+            paper_return=0.20,
+            live_max_drawdown=0.08,
+            infrastructure_sharpe=0.90,
+            reconciliation_breaks=0,
+            critical_alerts=0,
+            trading_days=15,
+            enforce_fund_hurdles=True,
+        )
+        assert applied.allowed
+        assert mgr.current_stage == DeploymentStage.LIVE_5PCT
+
+    def test_strict_fund_gate_blocks_operational_breaks(self):
+        mgr = CapitalDeploymentManager(10_000_000)
+        transition = mgr.can_advance(
+            live_sharpe=1.20,
+            paper_sharpe=1.10,
+            live_return=0.19,
+            paper_return=0.20,
+            live_max_drawdown=0.07,
+            infrastructure_sharpe=0.88,
+            reconciliation_breaks=1,
+            critical_alerts=0,
+            trading_days=15,
+            enforce_fund_hurdles=True,
+        )
+        assert not transition.allowed
+        assert any("reconciliation" in msg for msg in transition.failed_checks)

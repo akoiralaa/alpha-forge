@@ -16,6 +16,8 @@ from src.execution.wal import WriteAheadLog
 from src.monitoring.alerting import AlertManager, AlertSeverity, default_trading_rules
 from src.monitoring.health import HealthChecker, HealthStatus
 from src.monitoring.metrics import TradingMetrics
+from src.portfolio.allocator import CentralRiskAllocator
+from src.portfolio.capacity import LiquidityCapacityModel, LiquiditySnapshot
 from src.portfolio.risk import OrderIntent, Portfolio, PreTradeRiskCheck
 from src.portfolio.sizing import compute_position_size
 
@@ -96,12 +98,31 @@ class PaperTradingEngine:
         self.prices: dict[int, float] = {}
         self.volumes: dict[int, list[float]] = {}  # rolling volume
         self.returns: dict[int, list[float]] = {}   # rolling returns
+        self.latest_ticks: dict[int, PaperTick] = {}
         self.stats = PaperTradingStats(peak_nav=c.initial_nav, final_nav=c.initial_nav)
         self._tick_count = 0
         self._signal_fn: Optional[callable] = None
+        self._strategy_fns: dict[str, callable] = {}
+        self._strategy_allocator: CentralRiskAllocator | None = None
+        self._capacity_model: LiquidityCapacityModel | None = None
+        self._strategy_signals_by_symbol: dict[int, dict[str, float]] = {}
 
     def set_signal_function(self, fn):
         self._signal_fn = fn
+        self._strategy_fns = {}
+        self._strategy_allocator = None
+        self._capacity_model = None
+
+    def set_strategy_functions(
+        self,
+        strategy_fns: dict[str, callable],
+        allocator: CentralRiskAllocator | None = None,
+        capacity_model: LiquidityCapacityModel | None = None,
+    ):
+        self._strategy_fns = dict(strategy_fns)
+        self._strategy_allocator = allocator
+        self._capacity_model = capacity_model or LiquidityCapacityModel()
+        self._signal_fn = None
 
     def _setup_health_checks(self):
         self.health.register("broker", lambda: (
@@ -120,6 +141,7 @@ class PaperTradingEngine:
 
         sid = tick.symbol_id
         price = tick.price
+        self.latest_ticks[sid] = tick
 
         # Update price state
         prev_price = self.prices.get(sid)
@@ -134,6 +156,7 @@ class PaperTradingEngine:
             self.returns[sid].append(ret)
             if len(self.returns[sid]) > 100:
                 self.returns[sid] = self.returns[sid][-100:]
+            self._update_strategy_realized_performance(sid, ret)
 
         # Track volume
         if sid not in self.volumes:
@@ -154,12 +177,21 @@ class PaperTradingEngine:
         # Update metrics
         self.metrics.nav.set(self.portfolio.nav)
         self.metrics.drawdown_pct.set(self.portfolio.drawdown_pct)
+        self.metrics.peak_nav.set(self.portfolio.peak_nav)
+        self.metrics.daily_pnl.set(self.stats.total_pnl)
+        self.metrics.gross_exposure.set(self.portfolio.gross_exposure)
+        self.metrics.net_exposure.set(self.portfolio.net_exposure)
         self.metrics.position_count.set(len(self.broker.get_positions()))
+        self.metrics.kill_switch_level.set(int(self.kill_switch.level))
+        self.metrics.vpin.set(self.portfolio.current_vpin)
         self.metrics.signal_value.labels(signal_name=f"sym_{sid}").set(signal)
+        self._update_strategy_metrics()
 
         # Check alerts
         fired = self.alerts.evaluate_all({
             "drawdown_pct": self.portfolio.drawdown_pct,
+            "gross_leverage": self.portfolio.gross_exposure / max(self.portfolio.nav, 1e-12),
+            "reconciliation_breaks": float(self.stats.reconciliation_breaks),
         })
         self.stats.alerts_fired += len(fired)
 
@@ -175,6 +207,23 @@ class PaperTradingEngine:
         return order_id
 
     def _compute_signal(self, symbol_id: int, price: float) -> float:
+        if self._strategy_fns:
+            strategy_signals = {
+                name: float(np.clip(fn(symbol_id, price, self), -1.0, 1.0))
+                for name, fn in self._strategy_fns.items()
+            }
+            self._strategy_signals_by_symbol[symbol_id] = strategy_signals
+            for name, value in strategy_signals.items():
+                self.metrics.signal_value.labels(signal_name=f"strategy_{name}").set(value)
+
+            if self._strategy_allocator:
+                return self._strategy_allocator.combine_signals(strategy_signals)
+
+            active = [sig for sig in strategy_signals.values() if abs(sig) > 1e-12]
+            if not active:
+                return 0.0
+            return float(np.clip(np.mean(active), -1.0, 1.0))
+
         if self._signal_fn:
             return self._signal_fn(symbol_id, price, self)
 
@@ -209,6 +258,7 @@ class PaperTradingEngine:
 
         side = 1 if size > 0 else -1
         abs_size = abs(size)
+        self._observe_strategy_capacity(symbol_id, abs_size * price)
 
         order, risk_result = self.order_manager.submit(
             symbol_id, side, abs_size,
@@ -243,14 +293,90 @@ class PaperTradingEngine:
 
         return order.order_id
 
+    def _build_liquidity_snapshot(self, symbol_id: int, price: float) -> LiquiditySnapshot:
+        tick = self.latest_ticks.get(symbol_id)
+        spread_bps = 2.0
+        if tick is not None and tick.bid > 0 and tick.ask > 0 and price > 0:
+            spread_bps = (tick.ask - tick.bid) / price * 10_000.0
+        rets = self.returns.get(symbol_id, [])
+        realized_vol_daily = (
+            np.std(rets[-20:]) * np.sqrt(252)
+            if len(rets) >= 5 else 0.02
+        )
+        adv_usd = max(np.mean(self.volumes.get(symbol_id, [1_000_000])) * price, 1.0)
+        return LiquiditySnapshot(
+            symbol_id=symbol_id,
+            price=max(price, 1e-8),
+            adv_usd=adv_usd,
+            spread_bps=spread_bps,
+            realized_vol_daily=max(realized_vol_daily, 1e-4),
+        )
+
+    def _observe_strategy_capacity(self, symbol_id: int, order_notional_usd: float) -> None:
+        if not self._strategy_allocator or not self._capacity_model:
+            return
+        strategy_signals = self._strategy_signals_by_symbol.get(symbol_id)
+        if not strategy_signals:
+            return
+        weights = self._strategy_allocator.target_weights()
+        contributions = {
+            name: abs(weights.get(name, 0.0) * signal)
+            for name, signal in strategy_signals.items()
+            if name in weights and abs(signal) > 1e-12
+        }
+        total = sum(contributions.values())
+        if total <= 1e-12:
+            return
+
+        snapshot = self._build_liquidity_snapshot(symbol_id, self.prices.get(symbol_id, 0.0) or 0.0)
+        for name, contribution in contributions.items():
+            frac = contribution / total
+            estimate = self._capacity_model.estimate_order(
+                snapshot, order_notional_usd * frac
+            )
+            self._strategy_allocator.observe_capacity(
+                name,
+                utilization=estimate.utilization,
+                impact_bps=estimate.impact_bps,
+            )
+
+    def _update_strategy_realized_performance(self, symbol_id: int, realized_return: float) -> None:
+        if not self._strategy_allocator:
+            return
+        strategy_signals = self._strategy_signals_by_symbol.get(symbol_id)
+        if not strategy_signals:
+            return
+        for name, signal in strategy_signals.items():
+            self._strategy_allocator.observe(name, float(signal) * realized_return)
+
+    def _update_strategy_metrics(self) -> None:
+        if not self._strategy_allocator:
+            return
+        for name, snapshot in self._strategy_allocator.snapshot().items():
+            self.metrics.strategy_weight.labels(strategy_name=name).set(snapshot["weight"])
+            self.metrics.strategy_realized_sharpe.labels(strategy_name=name).set(snapshot["realized_sharpe"])
+            self.metrics.strategy_expected_sharpe.labels(strategy_name=name).set(snapshot["expected_sharpe"])
+            self.metrics.strategy_performance_gap.labels(strategy_name=name).set(snapshot["performance_gap"])
+            self.metrics.strategy_capacity_utilization.labels(strategy_name=name).set(snapshot["capacity_utilization"])
+            self.metrics.strategy_avg_impact_bps.labels(strategy_name=name).set(snapshot["avg_impact_bps"])
+
     def _update_nav(self):
         positions = self.broker.get_positions()
+        self.portfolio.positions = {
+            sid: qty * self.prices.get(sid, 0.0)
+            for sid, qty in positions.items()
+            if abs(qty) > 1e-12
+        }
         unrealized = sum(
             qty * self.prices.get(sid, 0)
             for sid, qty in positions.items()
         )
         self.portfolio.nav = self.broker.cash + unrealized
         self.portfolio.peak_nav = max(self.portfolio.peak_nav, self.portfolio.nav)
+        self.portfolio.daily_pnl_pct = (
+            (self.portfolio.nav - self.config.initial_nav) / self.config.initial_nav
+            if self.config.initial_nav > 0 else 0.0
+        )
 
         dd = self.portfolio.drawdown_pct
         self.stats.max_drawdown_pct = max(self.stats.max_drawdown_pct, dd)
@@ -465,10 +591,28 @@ class StageTransition:
     ratio: float
     allowed: bool
     reason: str = ""
+    live_return: float | None = None
+    paper_return: float | None = None
+    live_max_drawdown: float | None = None
+    infrastructure_sharpe: float | None = None
+    reconciliation_breaks: int = 0
+    critical_alerts: int = 0
+    trading_days: int = 0
+    failed_checks: list[str] = field(default_factory=list)
 
 class CapitalDeploymentManager:
 
     SHARPE_GATE = 0.80  # live_sharpe >= 0.80 * paper_sharpe
+    LIVE_SHARPE_GATE = 1.00
+    LIVE_RETURN_GATE = 0.15
+    MAX_DRAWDOWN_GATE = 0.12
+    INFRA_SHARPE_GATE = 0.80
+    MIN_TRADING_DAYS = {
+        DeploymentStage.LIVE_5PCT: 10,
+        DeploymentStage.LIVE_20PCT: 20,
+        DeploymentStage.LIVE_50PCT: 40,
+        DeploymentStage.LIVE_100PCT: 60,
+    }
 
     def __init__(self, target_capital: float):
         self.target_capital = target_capital
@@ -479,7 +623,20 @@ class CapitalDeploymentManager:
     def current_capital(self) -> float:
         return self.target_capital * STAGE_CAPITAL_PCT[self.current_stage]
 
-    def can_advance(self, live_sharpe: float, paper_sharpe: float) -> StageTransition:
+    def can_advance(
+        self,
+        live_sharpe: float,
+        paper_sharpe: float,
+        *,
+        live_return: float | None = None,
+        paper_return: float | None = None,
+        live_max_drawdown: float | None = None,
+        infrastructure_sharpe: float | None = None,
+        reconciliation_breaks: int = 0,
+        critical_alerts: int = 0,
+        trading_days: int = 0,
+        enforce_fund_hurdles: bool = False,
+    ) -> StageTransition:
         if self.current_stage == DeploymentStage.LIVE_100PCT:
             return StageTransition(
                 self.current_stage, self.current_stage,
@@ -488,20 +645,60 @@ class CapitalDeploymentManager:
 
         next_stage = DeploymentStage(self.current_stage.value + 1)
         ratio = live_sharpe / paper_sharpe if abs(paper_sharpe) > 1e-12 else 0.0
-        allowed = ratio >= self.SHARPE_GATE
+        failed_checks: list[str] = []
 
-        reason = ""
-        if not allowed:
-            reason = f"live/paper ratio {ratio:.2f} < {self.SHARPE_GATE}"
+        if ratio < self.SHARPE_GATE:
+            failed_checks.append(f"live/paper sharpe ratio {ratio:.2f} < {self.SHARPE_GATE:.2f}")
+
+        if enforce_fund_hurdles:
+            required_days = self.MIN_TRADING_DAYS.get(next_stage, 0)
+            if trading_days < required_days:
+                failed_checks.append(f"trading days {trading_days} < required {required_days}")
+            if live_sharpe < self.LIVE_SHARPE_GATE:
+                failed_checks.append(f"live sharpe {live_sharpe:.2f} < {self.LIVE_SHARPE_GATE:.2f}")
+            if live_return is None:
+                failed_checks.append("missing live annualized return")
+            elif live_return < self.LIVE_RETURN_GATE:
+                failed_checks.append(f"live return {live_return:.2%} < {self.LIVE_RETURN_GATE:.0%}")
+            if live_max_drawdown is None:
+                failed_checks.append("missing live max drawdown")
+            elif live_max_drawdown > self.MAX_DRAWDOWN_GATE:
+                failed_checks.append(f"live max drawdown {live_max_drawdown:.2%} > {self.MAX_DRAWDOWN_GATE:.0%}")
+            if infrastructure_sharpe is None:
+                failed_checks.append("missing infrastructure sharpe")
+            elif infrastructure_sharpe < self.INFRA_SHARPE_GATE:
+                failed_checks.append(
+                    f"infrastructure sharpe {infrastructure_sharpe:.2f} < {self.INFRA_SHARPE_GATE:.2f}"
+                )
+            if reconciliation_breaks > 0:
+                failed_checks.append(f"reconciliation breaks {reconciliation_breaks} > 0")
+            if critical_alerts > 0:
+                failed_checks.append(f"critical alerts {critical_alerts} > 0")
+
+        allowed = len(failed_checks) == 0
+        reason = "; ".join(failed_checks)
 
         transition = StageTransition(
             self.current_stage, next_stage,
             live_sharpe, paper_sharpe, ratio, allowed, reason,
+            live_return=live_return,
+            paper_return=paper_return,
+            live_max_drawdown=live_max_drawdown,
+            infrastructure_sharpe=infrastructure_sharpe,
+            reconciliation_breaks=reconciliation_breaks,
+            critical_alerts=critical_alerts,
+            trading_days=trading_days,
+            failed_checks=failed_checks,
         )
         return transition
 
-    def advance(self, live_sharpe: float, paper_sharpe: float) -> StageTransition:
-        transition = self.can_advance(live_sharpe, paper_sharpe)
+    def advance(
+        self,
+        live_sharpe: float,
+        paper_sharpe: float,
+        **kwargs,
+    ) -> StageTransition:
+        transition = self.can_advance(live_sharpe, paper_sharpe, **kwargs)
         if transition.allowed:
             self.current_stage = transition.to_stage
         self.transitions.append(transition)

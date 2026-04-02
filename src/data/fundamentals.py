@@ -45,6 +45,7 @@ class FundamentalsStore:
     METRIC_FLOAT = "FLOAT"
     METRIC_SHORT_INTEREST = "SHORT_INTEREST"
     METRIC_ANALYST_EST_EPS = "ANALYST_EST_EPS"
+    METRIC_ANALYST_EST_REVENUE = "ANALYST_EST_REVENUE"
     METRIC_ANALYST_REVISION = "ANALYST_REVISION"
     METRIC_MARKET_CAP = "MARKET_CAP"
     METRIC_ADV_20D = "ADV_20D"              # 20-day average daily volume (dollars)
@@ -183,20 +184,34 @@ class FundamentalsStore:
             for r in rows
         ]
 
+    def get_surprise(
+        self,
+        canonical_id: int,
+        as_of_ns: int,
+        actual_metric: str,
+        estimate_metric: str,
+    ) -> float | None:
+        actual = self.get_as_of(canonical_id, actual_metric, as_of_ns)
+        estimate = self.get_as_of(canonical_id, estimate_metric, as_of_ns)
+        if actual is None or estimate is None:
+            return None
+        if estimate.value == 0:
+            return None
+        return (actual.value - estimate.value) / abs(estimate.value)
+
     def get_earnings_surprise(
         self,
         canonical_id: int,
         as_of_ns: int,
     ) -> float | None:
-        actual = self.get_as_of(canonical_id, self.METRIC_EPS, as_of_ns)
-        estimate = self.get_as_of(canonical_id, self.METRIC_ANALYST_EST_EPS, as_of_ns)
-        if actual is None or estimate is None:
-            return None
-        if estimate.value == 0:
-            return None
         # Simplified surprise — in production this would use historical
         # surprise distribution for Z-scoring
-        return (actual.value - estimate.value) / abs(estimate.value)
+        return self.get_surprise(
+            canonical_id,
+            as_of_ns,
+            self.METRIC_EPS,
+            self.METRIC_ANALYST_EST_EPS,
+        )
 
     def count_records(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) FROM fundamentals_pit").fetchone()

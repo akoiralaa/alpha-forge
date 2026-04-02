@@ -40,6 +40,9 @@ from scipy.stats import rankdata
 
 from src.data.ingest.base import AssetClass
 from src.data.ingest.data_manager import DataManager, build_data_manager_from_env
+from src.portfolio.allocator import CentralRiskAllocator, StrategyExpectation
+from src.portfolio.capacity import LiquidityCapacityModel, LiquiditySnapshot
+from src.regime.tracker import RegimeTracker
 
 
 ASSET_TYPES = {}
@@ -51,6 +54,38 @@ _ASSET_CLASS_MAP = {
     "BOND": AssetClass.BOND, "FX": AssetClass.FX,
     "VOLATILITY": AssetClass.VOLATILITY,
 }
+
+MIN_BARS_BY_TYPE = {
+    "ETF": 756,
+    "EQUITY": 756,
+    "FUTURE": 252,
+    "COMMODITY": 252,
+    "BOND": 252,
+    "FX": 252,
+    "VOLATILITY": 252,
+}
+
+MAX_STALE_DAYS_BY_TYPE = {
+    "ETF": 45,
+    "EQUITY": 45,
+    "FUTURE": 10,
+    "COMMODITY": 10,
+    "BOND": 10,
+    "FX": 10,
+    "VOLATILITY": 10,
+}
+
+CORE_STRATEGY_BASE_WEIGHTS = {
+    "momentum": 0.32,
+    "quality": 0.36,
+    "carry": 0.06,
+    "sector_rot": 0.14,
+    "high_52w": 0.12,
+}
+
+FAST_MREV_REBAL_FREQ = 5
+FAST_MREV_TARGET_GROSS = 0.08
+FAST_MREV_MAX_POS = 0.010
 
 # ═══════════════════════════════════════════════════════════════
 #  SECTOR MAP (GICS)
@@ -184,6 +219,318 @@ def load_universe_static(config_path):
             universe.append((sym, atype))
             ASSET_TYPES[sym] = atype
     return universe
+
+
+def default_core_strategy_weights():
+    return dict(CORE_STRATEGY_BASE_WEIGHTS)
+
+
+def filter_histories_for_backtest(
+    all_data,
+    universe,
+    min_bars_by_type=None,
+    max_stale_days_by_type=None,
+):
+    min_bars_by_type = min_bars_by_type or MIN_BARS_BY_TYPE
+    max_stale_days_by_type = max_stale_days_by_type or MAX_STALE_DAYS_BY_TYPE
+
+    non_empty = {
+        sym: df
+        for sym, df in all_data.items()
+        if df is not None and not df.empty and "date" in df.columns
+    }
+    if not non_empty:
+        return {}, [], None
+
+    latest_date = max(pd.to_datetime(df["date"], utc=True).max() for df in non_empty.values())
+    filtered = {}
+    dropped = []
+
+    for sym, atype in universe:
+        df = non_empty.get(sym)
+        if df is None:
+            continue
+
+        n_bars = len(df)
+        end_dt = pd.to_datetime(df["date"], utc=True).max()
+        stale_days = int((latest_date - end_dt).days)
+        min_bars = int(min_bars_by_type.get(atype, 252))
+        max_stale = int(max_stale_days_by_type.get(atype, 45))
+
+        if n_bars < min_bars:
+            dropped.append((sym, atype, "short_history", n_bars, str(end_dt.date())))
+            continue
+        if stale_days > max_stale:
+            dropped.append((sym, atype, "stale_history", n_bars, str(end_dt.date())))
+            continue
+
+        filtered[sym] = df
+
+    return filtered, dropped, latest_date
+
+
+def compute_strategy_test_returns(strategies, returns, equity_syms, warmup=280, top_n=20, bottom_n=20):
+    strat_returns = {}
+    for name, sig in strategies.items():
+        aligned = sig.reindex(columns=equity_syms).fillna(0.0)
+        daily_r = pd.Series(0.0, index=returns.index, dtype=float)
+        for i in range(warmup, len(returns) - 1):
+            row = aligned.iloc[i].dropna()
+            if len(row) < (top_n + bottom_n):
+                continue
+            top = row.nlargest(top_n).index
+            bot = row.nsmallest(bottom_n).index
+            ret_top = returns[top].iloc[i + 1].mean()
+            ret_bot = returns[bot].iloc[i + 1].mean()
+            daily_r.iloc[i + 1] = ret_top - ret_bot
+        strat_returns[name] = daily_r.iloc[warmup:]
+    return pd.DataFrame(strat_returns)
+
+
+def build_strategy_evidence_multipliers(strategy_returns, target_index):
+    if strategy_returns.empty:
+        return pd.DataFrame(1.0, index=target_index, columns=[])
+
+    multipliers = pd.DataFrame(1.0, index=target_index, columns=strategy_returns.columns)
+    for name in strategy_returns.columns:
+        r = strategy_returns[name].reindex(target_index).fillna(0.0)
+        trailing_mean = r.rolling(126, min_periods=42).mean()
+        trailing_vol = r.rolling(126, min_periods=42).std()
+        trailing_sharpe = (trailing_mean / (trailing_vol + 1e-12)) * np.sqrt(252)
+        hit_rate = (r > 0).astype(float).rolling(63, min_periods=30).mean()
+
+        mult = 0.80 + 0.20 * trailing_sharpe.clip(-1.5, 2.5) + 0.70 * (hit_rate - 0.50)
+        mult = mult.clip(0.05, 1.50)
+
+        weak = (trailing_sharpe < -0.10) & (hit_rate < 0.48)
+        mult[weak] = mult[weak] * 0.35
+        multipliers[name] = mult.shift(1).fillna(1.0)
+
+    return multipliers.fillna(1.0)
+
+
+def build_high_52w_kill_switch(target_index, regime_info, strategy_returns):
+    """
+    Disable or damp the 52w-high sleeve in regimes where it historically adds
+    churn without enough edge.
+    """
+    gate = pd.Series(1.0, index=target_index, dtype=float)
+
+    if regime_info is not None and not regime_info.empty:
+        labels = regime_info["regime_label"].reindex(target_index).fillna("WARMUP")
+        confidence = regime_info["confidence"].reindex(target_index).fillna(0.0).clip(0.0, 1.0)
+        signal_gate = regime_info["signal_gate"].reindex(target_index).fillna(True).astype(bool)
+
+        hard_off = (~signal_gate) | labels.isin({"HIGH_VOL_CHAOTIC", "LIQUIDITY_CRISIS"})
+        gate.loc[hard_off] = 0.0
+
+        medium_off = (labels == "HIGH_VOL_TRENDING") & (confidence >= 0.55)
+        gate.loc[medium_off] = np.minimum(gate.loc[medium_off], 0.35)
+
+        low_conf = confidence < 0.35
+        gate.loc[low_conf] = np.minimum(gate.loc[low_conf], 0.55)
+
+    if strategy_returns is not None and "high_52w" in strategy_returns.columns:
+        r = strategy_returns["high_52w"].reindex(target_index).fillna(0.0)
+        trailing_sharpe = (
+            r.rolling(126, min_periods=42).mean()
+            / (r.rolling(126, min_periods=42).std() + 1e-12)
+        ) * np.sqrt(252)
+        weak = (trailing_sharpe < -0.15) & (trailing_sharpe >= -0.35)
+        very_weak = trailing_sharpe < -0.35
+        gate.loc[weak] = np.minimum(gate.loc[weak], 0.25)
+        gate.loc[very_weak] = 0.0
+
+    return gate.clip(0.0, 1.0).ffill().fillna(1.0)
+
+
+def build_strategy_signal_weights_for_capacity(signal_row, gross_weight, top_k=80):
+    signal_row = signal_row.replace([np.inf, -np.inf], np.nan).dropna()
+    if signal_row.empty or abs(gross_weight) < 1e-12:
+        return {}
+    signal_row = signal_row[signal_row.abs() > 0.02]
+    if signal_row.empty:
+        return {}
+    signal_row = signal_row.reindex(signal_row.abs().sort_values(ascending=False).index).iloc[:top_k]
+    denom = signal_row.abs().sum()
+    if denom < 1e-12:
+        return {}
+    return {sym: float(gross_weight * val / denom) for sym, val in signal_row.items()}
+
+
+def build_liquidity_snapshot(
+    symbol_id,
+    symbol,
+    i,
+    prices,
+    adv_usd_frame,
+    daily_vol_frame,
+    participation_limit=0.05,
+    impact_limit_bps=15.0,
+    max_spread_bps=14.0,
+):
+    price = float(prices[symbol].iloc[i]) if symbol in prices.columns else 0.0
+    if not np.isfinite(price) or price <= 0:
+        price = 1.0
+
+    adv_usd = 5_000_000.0
+    if adv_usd_frame is not None and symbol in adv_usd_frame.columns:
+        adv_val = float(adv_usd_frame[symbol].iloc[i])
+        if np.isfinite(adv_val) and adv_val > 0:
+            adv_usd = adv_val
+
+    realized_vol = 0.02
+    if daily_vol_frame is not None and symbol in daily_vol_frame.columns:
+        vol_val = float(daily_vol_frame[symbol].iloc[i])
+        if np.isfinite(vol_val) and vol_val > 0:
+            realized_vol = vol_val
+
+    spread_bps = float(np.clip(1.8 + 180.0 * realized_vol, 1.2, 40.0))
+    return LiquiditySnapshot(
+        symbol_id=int(symbol_id),
+        price=price,
+        adv_usd=adv_usd,
+        spread_bps=spread_bps,
+        realized_vol_daily=max(realized_vol, 1e-4),
+        participation_limit=float(participation_limit),
+        impact_limit_bps=float(impact_limit_bps),
+        max_spread_bps=float(max_spread_bps),
+    )
+
+
+def build_dynamic_allocator_scales(
+    active_strategies,
+    base_weights,
+    strategy_frames,
+    strategy_returns,
+    prices,
+    returns,
+    equity_syms,
+    target_gross,
+    rebal_freq,
+    nav_usd,
+    regime_info=None,
+    volumes=None,
+    capacity_impact_k=0.45,
+    capacity_participation_limit=0.05,
+    capacity_impact_limit_bps=15.0,
+    capacity_max_spread_bps=14.0,
+):
+    scales = pd.DataFrame(1.0, index=prices.index, columns=active_strategies, dtype=float)
+    diagnostics = {
+        "allocator_enabled": False,
+        "allocator_capacity_updates": 0,
+        "allocator_weight_entropy": np.nan,
+    }
+    if len(active_strategies) <= 1:
+        return scales, diagnostics
+
+    expectations = []
+    for name in active_strategies:
+        r = strategy_returns[name].dropna() if name in strategy_returns.columns else pd.Series(dtype=float)
+        ann_ret = float(r.mean() * 252) if len(r) > 20 else 0.08
+        ann_vol = float(r.std() * np.sqrt(252)) if len(r) > 20 else 0.18
+        expected_return = float(np.clip(max(ann_ret, 0.04), 0.04, 0.30))
+        expected_vol = float(np.clip(ann_vol, 0.08, 0.55))
+        max_weight = 0.55 if name != "high_52w" else 0.30
+        expectations.append(
+            StrategyExpectation(
+                name=name,
+                expected_return_annual=expected_return,
+                expected_vol_annual=expected_vol,
+                base_weight=float(max(base_weights.get(name, 0.0), 1e-6)),
+                min_weight=0.01,
+                max_weight=max_weight,
+                drawdown_limit=0.12,
+                hard_stop_drawdown=0.25,
+            )
+        )
+
+    allocator = CentralRiskAllocator(
+        expectations=expectations,
+        ewma_decay=0.98,
+        min_observations=126,
+        exploration_floor=0.60,
+        capacity_soft_limit=0.75,
+        score_temperature=0.55,
+    )
+    capacity_model = LiquidityCapacityModel(impact_k=capacity_impact_k, min_adv_usd=1_000_000.0)
+    diagnostics["allocator_enabled"] = True
+
+    base_total = sum(max(base_weights.get(name, 0.0), 0.0) for name in active_strategies)
+    if base_total <= 0:
+        base_norm = {name: 1.0 / len(active_strategies) for name in active_strategies}
+    else:
+        base_norm = {name: max(base_weights.get(name, 0.0), 0.0) / base_total for name in active_strategies}
+
+    standalone = strategy_returns.reindex(prices.index).fillna(0.0)
+    symbol_to_id = {sym: idx + 1 for idx, sym in enumerate(equity_syms)}
+    daily_vol = returns[equity_syms].rolling(20, min_periods=10).std().fillna(0.02)
+    adv_usd = None
+    if volumes is not None and not volumes.empty:
+        adv_usd = (volumes[equity_syms].rolling(20, min_periods=5).mean() * prices[equity_syms]).fillna(0.0)
+
+    for i in range(280, len(prices)):
+        dt = prices.index[i]
+        if i > 280:
+            prev_dt = prices.index[i - 1]
+            for name in active_strategies:
+                allocator.observe(name, float(standalone.at[prev_dt, name]))
+
+        if i % rebal_freq == 0:
+            alloc_w = allocator.target_weights()
+            for name in active_strategies:
+                strat_gross = float(target_gross * alloc_w.get(name, 0.0))
+                if strat_gross <= 1e-8:
+                    continue
+                sig_row = strategy_frames[name].iloc[i]
+                symbol_weights = build_strategy_signal_weights_for_capacity(sig_row, strat_gross, top_k=70)
+                if not symbol_weights:
+                    continue
+                snapshots = {}
+                id_weights = {}
+                for sym, weight in symbol_weights.items():
+                    sid = symbol_to_id.get(sym)
+                    if sid is None:
+                        continue
+                    snapshots[sid] = build_liquidity_snapshot(
+                        sid,
+                        sym,
+                        i,
+                        prices,
+                        adv_usd,
+                        daily_vol,
+                        participation_limit=capacity_participation_limit,
+                        impact_limit_bps=capacity_impact_limit_bps,
+                        max_spread_bps=capacity_max_spread_bps,
+                    )
+                    id_weights[sid] = weight
+                if not id_weights:
+                    continue
+                estimate = capacity_model.estimate_strategy_capacity(
+                    strategy_name=name,
+                    symbol_weights=id_weights,
+                    snapshots=snapshots,
+                    nav_usd=float(max(nav_usd, 1_000_000.0)),
+                    turnover=max(1.0 / max(rebal_freq, 1), 0.05),
+                )
+                allocator.observe_capacity(
+                    name,
+                    utilization=estimate.utilization,
+                    capacity_nav_limit=estimate.nav_capacity_usd,
+                    impact_bps=estimate.weighted_impact_bps,
+                )
+                diagnostics["allocator_capacity_updates"] += 1
+
+        alloc_w = allocator.target_weights()
+        for name in active_strategies:
+            base_w = max(base_norm.get(name, 1.0 / len(active_strategies)), 1e-6)
+            scales.loc[dt, name] = float(np.clip(alloc_w.get(name, base_w) / base_w, 0.70, 1.30))
+
+    final_weights = allocator.target_weights()
+    entropy = -sum(w * np.log(max(w, 1e-12)) for w in final_weights.values())
+    diagnostics["allocator_weight_entropy"] = float(entropy)
+    return scales.ffill().fillna(1.0), diagnostics
 
 
 def fetch_daily_bars(dm, symbol, asset_type, use_cache=True):
@@ -539,71 +886,451 @@ def compute_breadth(prices, equity_syms):
     return above.mean(axis=1).rolling(5, min_periods=1).mean()
 
 
+def build_regime_features(prices, equity_syms, spy_col="SPY"):
+    """Daily market features for regime classification."""
+    if spy_col not in prices.columns:
+        spy_col = prices.columns[0]
+
+    spy = prices[spy_col]
+    spy_ret = spy.pct_change().fillna(0)
+    rvol20 = spy_ret.rolling(20, min_periods=20).std() * np.sqrt(252)
+    ret_63 = spy / spy.shift(63) - 1
+    spy_sma200 = spy.rolling(200, min_periods=200).mean()
+    trend_gap = spy / spy_sma200 - 1
+    breadth = compute_breadth(prices, equity_syms)
+
+    features = pd.DataFrame(
+        {
+            "vol_20": rvol20,
+            "ret_63": ret_63,
+            "breadth": breadth,
+            "trend_gap": trend_gap,
+        },
+        index=prices.index,
+    )
+    return features.replace([np.inf, -np.inf], np.nan)
+
+
+def compute_regime_states(prices, equity_syms, fit_window=504, refit_every=63):
+    """
+    Fit the repo's HMM+GMM tracker on trailing market features and update online.
+
+    We use regimes for two things only:
+    1. tilting multi-strategy weights toward the signals that fit the tape
+    2. allowing shorts only when the market is hostile enough to justify them
+    """
+    features = build_regime_features(prices, equity_syms)
+    defaults = {
+        "regime_label": "WARMUP",
+        "position_scale": 1.0,
+        "signal_gate": True,
+        "allow_shorts": False,
+        "confidence": 0.0,
+    }
+    regime_info = pd.DataFrame(defaults, index=prices.index)
+
+    valid = features.dropna()
+    if len(valid) <= fit_window:
+        return regime_info
+
+    tracker = None
+    last_fit_pos = -1
+
+    for pos, (dt, row) in enumerate(valid.iterrows()):
+        if pos < fit_window:
+            continue
+
+        if tracker is None or (pos - last_fit_pos) >= refit_every:
+            train = valid.iloc[max(0, pos - fit_window):pos]
+            if len(train) < fit_window:
+                continue
+            try:
+                tracker = RegimeTracker(n_regimes=5)
+                tracker.fit(train.values)
+                last_fit_pos = pos
+            except Exception:
+                tracker = None
+                continue
+
+        if tracker is None:
+            continue
+
+        try:
+            state = tracker.update(row.values)
+        except Exception:
+            continue
+
+        allow_shorts = (
+            state.signal_gate_open
+            and state.confidence >= 0.45
+            and state.regime_label in {"HIGH_VOL_TRENDING", "HIGH_VOL_CHAOTIC", "LIQUIDITY_CRISIS"}
+        )
+
+        regime_info.loc[dt, "regime_label"] = state.regime_label
+        regime_info.loc[dt, "position_scale"] = state.position_scale
+        regime_info.loc[dt, "signal_gate"] = state.signal_gate_open
+        regime_info.loc[dt, "allow_shorts"] = allow_shorts
+        regime_info.loc[dt, "confidence"] = state.confidence
+
+    return regime_info.ffill()
+
+
+def apply_hedge_fund_fees(returns, management_fee=0.02, incentive_fee=0.20):
+    """
+    Approximate standard 2-and-20 LP economics.
+
+    Management fee accrues daily. Incentive fee is crystallized on the last
+    trading day of each calendar year on gains above the running high-water mark.
+    """
+    if len(returns) == 0:
+        return returns.copy()
+
+    lp_ret = returns.astype(float).copy()
+    if management_fee:
+        lp_ret -= management_fee / 252.0
+
+    nav = 1.0
+    high_water = 1.0
+    year_index = pd.Series(lp_ret.index.year, index=lp_ret.index)
+
+    for year in sorted(year_index.unique()):
+        yr_idx = lp_ret.index[year_index == year]
+        if len(yr_idx) == 0:
+            continue
+
+        pre_fee_eq = nav * (1 + lp_ret.loc[yr_idx]).cumprod()
+        pre_fee_end = float(pre_fee_eq.iloc[-1])
+
+        if incentive_fee > 0 and pre_fee_end > high_water:
+            incentive_charge = incentive_fee * (pre_fee_end - high_water)
+            last_nav_before_fee = float(pre_fee_eq.iloc[-2]) if len(pre_fee_eq) > 1 else nav
+            if last_nav_before_fee > 0:
+                lp_ret.loc[yr_idx[-1]] -= incentive_charge / last_nav_before_fee
+            pre_fee_end -= incentive_charge
+
+        nav = pre_fee_end
+        high_water = max(high_water, nav)
+
+    return lp_ret
+
+
+def compute_crisis_overlay(env_value, breadth_value, regime_row, current_dd, preemptive_de_risk):
+    """
+    Convert market stress into a mild pre-emptive de-risking signal.
+
+    Unlike the hard drawdown circuit breaker, this aims to trim risk before the
+    portfolio is already deep in a hole. It should be gentle enough to preserve
+    most upside in normal tapes.
+    """
+    crisis_score = 0.0
+
+    if regime_row is not None:
+        label = regime_row.get("regime_label", "WARMUP")
+        confidence = float(np.clip(regime_row.get("confidence", 0.0), 0.0, 1.0))
+        position_scale = float(np.clip(regime_row.get("position_scale", 1.0), 0.30, 1.20))
+
+        if label == "LIQUIDITY_CRISIS":
+            crisis_score += 0.55 + 0.25 * confidence
+        elif label == "HIGH_VOL_CHAOTIC":
+            crisis_score += 0.35 + 0.25 * confidence
+        elif label == "HIGH_VOL_TRENDING":
+            crisis_score += 0.18 + 0.20 * confidence
+
+        crisis_score += np.clip((0.95 - position_scale) / 0.65, 0.0, 0.25)
+
+    crisis_score += np.clip((0.45 - breadth_value) / 0.20, 0.0, 0.30)
+    crisis_score += np.clip((0.72 - env_value) / 0.35, 0.0, 0.25)
+
+    if current_dd < -0.06:
+        crisis_score += np.clip((abs(current_dd) - 0.06) / 0.16, 0.0, 0.20)
+
+    crisis_score = float(np.clip(crisis_score, 0.0, 1.0))
+    proactive_scale = float(np.clip(1.0 - preemptive_de_risk * crisis_score, 0.82, 1.0))
+    return crisis_score, proactive_scale
+
+
+def build_fast_mean_reversion_overlay(
+    mean_reversion_signal,
+    prices,
+    returns,
+    equity_syms,
+    regime_info=None,
+    target_gross=FAST_MREV_TARGET_GROSS,
+    rebal_freq=FAST_MREV_REBAL_FREQ,
+    max_pos=FAST_MREV_MAX_POS,
+):
+    overlay = pd.DataFrame(0.0, index=prices.index, columns=equity_syms)
+    if mean_reversion_signal is None or mean_reversion_signal.empty:
+        return overlay
+
+    inst_vol = returns[equity_syms].rolling(20, min_periods=10).std() * np.sqrt(252)
+    inst_vol = inst_vol.bfill().clip(lower=0.05)
+    live_row = pd.Series(0.0, index=equity_syms)
+
+    for i in range(60, len(prices)):
+        if regime_info is not None:
+            regime_row = regime_info.iloc[i]
+            label = regime_row.get("regime_label", "WARMUP")
+            confidence = float(np.clip(regime_row.get("confidence", 0.0), 0.0, 1.0))
+            signal_gate = bool(regime_row.get("signal_gate", True))
+        else:
+            label = "MEAN_REVERTING_RANGE"
+            confidence = 0.5
+            signal_gate = True
+
+        overlay_active = (
+            signal_gate
+            and confidence >= 0.35
+            and label in {"MEAN_REVERTING_RANGE", "HIGH_VOL_CHAOTIC"}
+        )
+
+        if (i % rebal_freq != 0 and i > 60) or not overlay_active:
+            if not overlay_active:
+                live_row = pd.Series(0.0, index=equity_syms)
+            overlay.iloc[i] = live_row
+            continue
+
+        sig = mean_reversion_signal.iloc[i].dropna()
+        sig = sig[sig.abs() > 0.20]
+        if len(sig) < 16:
+            live_row = pd.Series(0.0, index=equity_syms)
+            overlay.iloc[i] = live_row
+            continue
+
+        long_picks = list(sig.nlargest(8).items())
+        short_picks = list(sig.nsmallest(8).items())
+        budget = target_gross * (0.75 + 0.25 * confidence)
+        long_budget = budget * 0.50
+        short_budget = budget * 0.50
+
+        w = pd.Series(0.0, index=equity_syms)
+        long_inv = {
+            sym: 1.0 / max(float(inst_vol[sym].iloc[i]), 0.05)
+            for sym, _ in long_picks
+        }
+        short_inv = {
+            sym: 1.0 / max(float(inst_vol[sym].iloc[i]), 0.05)
+            for sym, _ in short_picks
+        }
+        long_total = sum(long_inv.values()) or 1.0
+        short_total = sum(short_inv.values()) or 1.0
+
+        for sym, sig_val in long_picks:
+            tilt = 0.75 + 0.50 * min(abs(float(sig_val)), 1.0)
+            w[sym] = float(np.clip(long_budget * long_inv[sym] / long_total * tilt, 0.0, max_pos))
+        for sym, sig_val in short_picks:
+            tilt = 0.75 + 0.50 * min(abs(float(sig_val)), 1.0)
+            w[sym] = float(np.clip(-short_budget * short_inv[sym] / short_total * tilt, -max_pos, 0.0))
+
+        live_row = w
+        overlay.iloc[i] = live_row
+
+    return overlay
+
+
 def build_multi_strategy_portfolio(strategies, prices, returns, env, breadth,
                                    equity_syms, target_vol, rebal_freq, max_pos,
-                                   n_long, n_short, target_gross):
+                                   n_long, n_short, target_gross, regime_info=None,
+                                   hedge_symbol="SPY", crisis_hedge_max=0.35,
+                                   crisis_hedge_strength=0.75, crisis_beta_floor=0.15,
+                                   preemptive_de_risk=0.18, hedge_lookback=63,
+                                   strategy_weights=None,
+                                   volumes=None, nav_usd=10_000_000,
+                                   use_dynamic_allocator=True,
+                                   use_capacity_constraints=True,
+                                   capacity_impact_k=0.45,
+                                   capacity_participation_limit=0.05,
+                                   capacity_impact_limit_bps=15.0,
+                                   capacity_max_spread_bps=14.0):
     """
     Risk-parity blend of 8 strategies.
     Each strategy gets equal vol budget, then combined and optimized.
     """
+    hedge_available = hedge_symbol in prices.columns and hedge_symbol in returns.columns
+    trade_cols = list(equity_syms)
+    if hedge_available and hedge_symbol not in trade_cols:
+        trade_cols.append(hedge_symbol)
+
     inst_vol = returns[equity_syms].rolling(20, min_periods=10).std() * np.sqrt(252)
     inst_vol = inst_vol.bfill().clip(lower=0.02)
+    mkt_ret = returns[hedge_symbol] if hedge_available else returns.iloc[:, 0]
+    mkt_var = mkt_ret.rolling(hedge_lookback, min_periods=max(20, hedge_lookback // 2)).var()
+    rolling_beta = pd.DataFrame(1.0, index=prices.index, columns=equity_syms)
+    for col in equity_syms:
+        cov = returns[col].rolling(hedge_lookback, min_periods=max(20, hedge_lookback // 2)).cov(mkt_ret)
+        rolling_beta[col] = (cov / (mkt_var + 1e-10)).clip(-1.5, 3.0).fillna(1.0)
 
-    # Strategy weights — empirically validated on our data
-    # Killed: mean_reversion (needs daily rebal, -22 Sharpe at 15d freq),
-    #         BAB (growth decade killed low-beta premium, -0.55 Sharpe),
-    #         earnings_drift (noisy, -0.92 Sharpe)
-    # Concentrated into the WINNERS:
-    STRAT_WEIGHTS = {
-        "momentum":       0.25,   # core alpha engine, beta-hedged
-        "mean_reversion": 0.00,   # DISABLED: wrong time horizon for 15d rebal
-        "quality":        0.25,   # strongest standalone (+9.2 Sharpe in test)
-        "bab":            0.00,   # DISABLED: growth decade killed it
-        "carry":          0.15,   # slow, steady, uncorrelated (+0.36 Sharpe)
-        "sector_rot":     0.10,   # macro overlay (+0.15 Sharpe)
-        "earnings_drift": 0.00,   # DISABLED: noisy signal
-        "high_52w":       0.25,   # anchoring bias, strong (+8.55 Sharpe test)
+    # Core sleeves stay medium-horizon; fast mean reversion is handled separately
+    # so it does not pollute the slower 15-day book.
+    default_strategy_weights = {
+        "momentum":       CORE_STRATEGY_BASE_WEIGHTS["momentum"],
+        "mean_reversion": 0.00,
+        "quality":        CORE_STRATEGY_BASE_WEIGHTS["quality"],
+        "bab":            0.00,
+        "carry":          CORE_STRATEGY_BASE_WEIGHTS["carry"],
+        "sector_rot":     CORE_STRATEGY_BASE_WEIGHTS["sector_rot"],
+        "earnings_drift": 0.00,
+        "high_52w":       CORE_STRATEGY_BASE_WEIGHTS["high_52w"],
+    }
+    STRAT_WEIGHTS = dict(default_strategy_weights)
+    if strategy_weights is not None:
+        for name, value in strategy_weights.items():
+            if name in STRAT_WEIGHTS:
+                STRAT_WEIGHTS[name] = float(value)
+
+    REGIME_TILTS = {
+        "LOW_VOL_TRENDING": {
+            "momentum": 1.15,
+            "quality": 0.95,
+            "carry": 0.90,
+            "sector_rot": 1.00,
+            "high_52w": 1.20,
+        },
+        "MEAN_REVERTING_RANGE": {
+            "momentum": 0.90,
+            "quality": 1.05,
+            "carry": 1.00,
+            "sector_rot": 1.15,
+            "high_52w": 0.85,
+        },
+        "HIGH_VOL_TRENDING": {
+            "momentum": 1.00,
+            "quality": 1.10,
+            "carry": 1.05,
+            "sector_rot": 1.05,
+            "high_52w": 0.90,
+        },
+        "HIGH_VOL_CHAOTIC": {
+            "momentum": 0.80,
+            "quality": 1.20,
+            "carry": 1.10,
+            "sector_rot": 0.95,
+            "high_52w": 0.75,
+        },
+        "LIQUIDITY_CRISIS": {
+            "momentum": 0.75,
+            "quality": 1.25,
+            "carry": 1.10,
+            "sector_rot": 1.05,
+            "high_52w": 0.65,
+        },
     }
 
     # Blend all strategy signals into one composite
-    print("  Blending 8 strategies with risk-parity weights...", end=" ", flush=True)
+    active_strategies = [
+        name for name, base in STRAT_WEIGHTS.items()
+        if abs(base) > 1e-12 and name in strategies
+    ]
+    if not active_strategies:
+        active_strategies = list(strategies.keys())
+
+    print(f"  Blending {len(active_strategies)} active strategies with risk-parity weights...", end=" ", flush=True)
     t0 = time.time()
 
     composite = pd.DataFrame(0.0, index=prices.index, columns=equity_syms)
-    for name, w in STRAT_WEIGHTS.items():
-        sig = strategies[name]
-        for col in equity_syms:
-            if col in sig.columns:
-                composite[col] += w * sig[col].fillna(0)
+    strategy_frames = {
+        name: strategies[name].reindex(columns=equity_syms).fillna(0.0)
+        for name in active_strategies
+    }
+
+    strategy_scale = pd.DataFrame(1.0, index=prices.index, columns=active_strategies)
+    if regime_info is not None:
+        regime_labels = regime_info["regime_label"].reindex(prices.index).fillna("WARMUP")
+        confidences = regime_info["confidence"].reindex(prices.index).fillna(0.0).clip(lower=0.0, upper=1.0)
+        for label, tilt_map in REGIME_TILTS.items():
+            mask = regime_labels == label
+            if not mask.any():
+                continue
+            intensity = 0.50 + 0.50 * confidences.loc[mask]
+            for strat_name, multiplier in tilt_map.items():
+                if strat_name in strategy_scale.columns:
+                    strategy_scale.loc[mask, strat_name] = 1.0 + (multiplier - 1.0) * intensity
+
+    standalone_returns = compute_strategy_test_returns(
+        {name: strategy_frames[name] for name in active_strategies},
+        returns,
+        equity_syms,
+    )
+    evidence_scale = build_strategy_evidence_multipliers(standalone_returns, prices.index)
+
+    allocator_scale = pd.DataFrame(1.0, index=prices.index, columns=active_strategies, dtype=float)
+    allocator_diag = {
+        "allocator_enabled": False,
+        "allocator_capacity_updates": 0,
+        "allocator_weight_entropy": np.nan,
+    }
+    if use_dynamic_allocator:
+        allocator_scale, allocator_diag = build_dynamic_allocator_scales(
+            active_strategies=active_strategies,
+            base_weights=STRAT_WEIGHTS,
+            strategy_frames=strategy_frames,
+            strategy_returns=standalone_returns,
+            prices=prices,
+            returns=returns,
+            equity_syms=equity_syms,
+            target_gross=target_gross,
+            rebal_freq=rebal_freq,
+            nav_usd=nav_usd,
+            regime_info=regime_info,
+            volumes=volumes,
+            capacity_impact_k=capacity_impact_k,
+            capacity_participation_limit=capacity_participation_limit,
+            capacity_impact_limit_bps=capacity_impact_limit_bps,
+            capacity_max_spread_bps=capacity_max_spread_bps,
+        )
+
+    effective_weights = pd.DataFrame(
+        {
+            name: STRAT_WEIGHTS[name]
+            * strategy_scale[name]
+            * evidence_scale.get(name, 1.0)
+            * allocator_scale.get(name, 1.0)
+            for name in active_strategies
+        },
+        index=prices.index,
+    )
+
+    high_52w_active_pct = 1.0
+    if "high_52w" in effective_weights.columns:
+        high_52w_gate = build_high_52w_kill_switch(prices.index, regime_info, standalone_returns)
+        effective_weights["high_52w"] = effective_weights["high_52w"] * high_52w_gate
+        high_52w_active_pct = float((high_52w_gate > 0.01).mean())
+
+    weight_norm = effective_weights.sum(axis=1).replace(0, 1.0)
+
+    for name in active_strategies:
+        sig = strategy_frames[name]
+        w = effective_weights[name].div(weight_norm)
+        composite += sig.mul(w, axis=0)
 
     # Dynamic IC-based tilt: compute trailing 63-day strategy performance
     # and boost strategies that have been predictive recently
     fwd_5 = returns[equity_syms].rolling(5).sum().shift(-5)  # 5-day forward return
-    for name, w in STRAT_WEIGHTS.items():
-        sig = strategies[name]
-        # Fast IC: sample every 20 days
-        ic_boost = pd.Series(1.0, index=prices.index)
+    for name in active_strategies:
+        sig = strategy_frames[name]
+        ic_boost = pd.Series(1.0, index=prices.index, dtype=float)
         for i in range(300, len(prices), 20):
             ics = []
-            for t in range(max(0, i-63), i, 5):
+            for t in range(max(0, i - 63), i, 5):
                 f_row = sig.iloc[t].values if t < len(sig) else np.zeros(len(equity_syms))
                 r_row = fwd_5.iloc[t].values if t < len(fwd_5) else np.zeros(len(equity_syms))
                 valid = ~(np.isnan(f_row) | np.isnan(r_row))
                 if valid.sum() > 20:
-                    ic = np.corrcoef(rankdata(f_row[valid]), rankdata(r_row[valid]))[0, 1]
+                    f_valid = f_row[valid]
+                    r_valid = r_row[valid]
+                    if np.nanstd(f_valid) < 1e-12 or np.nanstd(r_valid) < 1e-12:
+                        continue
+                    ic = np.corrcoef(rankdata(f_valid), rankdata(r_valid))[0, 1]
                     if not np.isnan(ic):
                         ics.append(ic)
             if ics:
                 avg_ic = np.mean(ics)
-                # Boost if IC > 0, dampen if IC < 0
                 mult = 1.0 + np.clip(avg_ic * 15, -0.5, 1.0)
-                for j in range(i, min(i+20, len(ic_boost))):
+                for j in range(i, min(i + 20, len(ic_boost))):
                     ic_boost.iloc[j] = mult
 
-        # Apply IC boost
-        for col in equity_syms:
-            if col in sig.columns:
-                composite[col] += w * 0.3 * (ic_boost - 1.0) * sig[col].fillna(0)
+        w = effective_weights[name].div(weight_norm)
+        composite += sig.mul(w * 0.3 * (ic_boost - 1.0), axis=0)
 
     print(f"{time.time()-t0:.1f}s")
 
@@ -613,46 +1340,91 @@ def build_multi_strategy_portfolio(strategies, prices, returns, env, breadth,
     for sym in equity_syms:
         sector_stocks[sym_sector[sym]].append(sym)
 
-    weights = pd.DataFrame(0.0, index=prices.index, columns=equity_syms)
-    last_w = pd.Series(0.0, index=equity_syms)
-    blend_rate = 0.80  # keep 80% old, 20% new
+    quality_signal = strategies.get(
+        "quality",
+        pd.DataFrame(0.0, index=prices.index, columns=equity_syms),
+    ).reindex(columns=equity_syms).fillna(0.0)
+    sma200_eq = prices[equity_syms].rolling(200, min_periods=120).mean()
+    trend_gap_rank = cross_sectional_rank(-(prices[equity_syms] / sma200_eq - 1).replace([np.inf, -np.inf], np.nan).fillna(0.0))
+    beta_rank = cross_sectional_rank(rolling_beta.fillna(1.0))
+    short_signal = (
+        0.55 * (-composite)
+        + 0.20 * (-quality_signal)
+        + 0.15 * trend_gap_rank
+        + 0.10 * beta_rank
+    ).clip(-1.5, 1.5)
+
+    weights = pd.DataFrame(0.0, index=prices.index, columns=trade_cols)
+    target_w = pd.Series(0.0, index=equity_syms)
+    target_hedge = 0.0
+    live_row = pd.Series(0.0, index=trade_cols)
+    blend_rate = 0.90
 
     running_nav = 1.0
     peak_nav = 1.0
+    capacity_clamp_events = 0
+    max_capacity_util = 0.0
+
+    capacity_model = None
+    adv_usd = None
+    daily_vol_for_capacity = None
+    symbol_to_id = {sym: idx + 1 for idx, sym in enumerate(equity_syms)}
+    if use_capacity_constraints:
+        capacity_model = LiquidityCapacityModel(
+            impact_k=capacity_impact_k,
+            min_adv_usd=1_000_000.0,
+        )
+        if volumes is not None and not volumes.empty:
+            adv_usd = (volumes[equity_syms].rolling(20, min_periods=5).mean() * prices[equity_syms]).fillna(0.0)
+        daily_vol_for_capacity = returns[equity_syms].rolling(20, min_periods=10).std().fillna(0.02)
 
     for i in range(280, len(prices)):
         # Drawdown circuit breaker
         if i > 280:
-            day_ret = (last_w * returns[equity_syms].iloc[i]).sum()
+            day_ret = float((live_row * returns[trade_cols].iloc[i]).sum())
             running_nav *= (1 + day_ret)
             peak_nav = max(peak_nav, running_nav)
         current_dd = (running_nav / peak_nav) - 1 if peak_nav > 0 else 0
 
         dd_scale = 1.0
-        if current_dd < -0.25:
-            dd_scale = 0.40
-        elif current_dd < -0.18:
-            dd_scale = 0.65
-        elif current_dd < -0.10:
+        if current_dd < -0.30:
+            dd_scale = 0.45
+        elif current_dd < -0.22:
+            dd_scale = 0.70
+        elif current_dd < -0.12:
             dd_scale = 0.85
 
+        regime_row = regime_info.iloc[i] if regime_info is not None else None
+        regime_allows_shorts = bool(regime_row.get("allow_shorts", False)) if regime_row is not None else False
+        e = float(env.iloc[i]) if i < len(env) else 1.0
+        b = float(breadth.iloc[i]) if i < len(breadth) else 0.5
+        crisis_score, proactive_scale = compute_crisis_overlay(
+            e, b, regime_row, current_dd, preemptive_de_risk
+        )
+        overlay_scale = float(np.clip(dd_scale * proactive_scale, 0.55, 1.0))
+        prev_target = target_w.copy()
+
         if i % rebal_freq != 0 and i > 280:
-            if dd_scale < 1.0:
-                weights.iloc[i] = last_w * dd_scale
-            else:
-                weights.iloc[i] = last_w
+            live_row = pd.Series(0.0, index=trade_cols)
+            live_row.loc[equity_syms] = target_w * overlay_scale if overlay_scale < 1.0 else target_w.copy()
+            if hedge_available:
+                live_row.loc[hedge_symbol] = target_hedge
+            weights.iloc[i] = live_row
             continue
 
         sig = composite.iloc[i]
         valid = sig.dropna()
         valid = valid[valid.abs() > 0.005]
         if len(valid) < 20:
-            weights.iloc[i] = last_w
+            live_row = pd.Series(0.0, index=trade_cols)
+            live_row.loc[equity_syms] = target_w * overlay_scale if overlay_scale < 1.0 else target_w.copy()
+            if hedge_available:
+                live_row.loc[hedge_symbol] = target_hedge
+            weights.iloc[i] = live_row
             continue
 
-        e = env.iloc[i]
-        b = breadth.iloc[i] if i < len(breadth) else 0.5
-        is_bearish = e < 0.75 or b < 0.40
+        is_bearish = e < 0.85 or b < 0.50
+        shorts_active = regime_allows_shorts and (is_bearish or crisis_score > 0.35)
 
         # Sector-neutral selection
         long_picks, short_picks = [], []
@@ -667,12 +1439,16 @@ def build_multi_strategy_portfolio(strategies, prices, returns, env, breadth,
                 if sector_sigs[sym] > 0.05:
                     long_picks.append((sym, sector_sigs[sym]))
 
-            # Shorts: always available (market-neutral strategies need shorts)
-            # But scale short budget based on environment
-            n_s = max(int(len(sector_sigs) * 0.20), 1)
-            for sym in sector_sigs.tail(n_s).index:
-                if sector_sigs[sym] < -0.15:
-                    short_picks.append((sym, sector_sigs[sym]))
+            if shorts_active:
+                sector_short = short_signal.iloc[i].reindex(syms).dropna().sort_values(ascending=False)
+                n_s = max(int(len(sector_short) * 0.15), 1)
+                for sym in sector_short.head(n_s).index:
+                    if (
+                        sector_short[sym] > 0.18
+                        and quality_signal.iloc[i].get(sym, 0.0) < 0.05
+                        and prices[sym].iloc[i] < sma200_eq[sym].iloc[i]
+                    ):
+                        short_picks.append((sym, sector_short[sym]))
 
         long_picks.sort(key=lambda x: x[1], reverse=True)
         short_picks.sort(key=lambda x: x[1])
@@ -681,16 +1457,16 @@ def build_multi_strategy_portfolio(strategies, prices, returns, env, breadth,
 
         w = pd.Series(0.0, index=equity_syms)
 
-        # Adaptive exposure — v3 lesson: shorts bleed in bull markets
-        if is_bearish:
-            long_budget = target_gross * e * 0.65
-            short_budget = target_gross * 0.30
+        breadth_mult = np.clip(b * 1.5, 0.55, 1.20)
+        if shorts_active:
+            long_budget = target_gross * min(e, 1.05) * 0.72 * breadth_mult
+            short_budget = target_gross * (0.10 + 0.18 * crisis_score) * max(0.35, 1 - breadth_mult / 1.10)
         else:
-            long_budget = target_gross * min(e, 1.3)
-            short_budget = 0.0  # NO shorts in bull (proven in v3)
+            long_budget = target_gross * min(e, 1.35) * breadth_mult
+            short_budget = 0.0
 
-        long_budget *= dd_scale
-        short_budget *= dd_scale
+        long_budget *= overlay_scale
+        short_budget *= overlay_scale
 
         if long_picks:
             long_vols = {s: inst_vol[s].iloc[i] if s in inst_vol.columns else 0.20
@@ -709,20 +1485,86 @@ def build_multi_strategy_portfolio(strategies, prices, returns, env, breadth,
             total_inv = sum(short_inv.values())
             for sym, sig_val in short_picks:
                 raw_w = -short_budget * short_inv[sym] / total_inv
-                w[sym] = float(np.clip(raw_w, -max_pos * 0.5, 0))
+                w[sym] = float(np.clip(raw_w, -max_pos * 0.45, 0))
 
-        # Turnover dampening
+        # Exit stale names faster than we enter fresh ones.
         if i > 280:
-            delta = w - last_w
-            small = delta.abs() < 0.002
-            w[small] = last_w[small]
-            w = (1 - blend_rate) * w + blend_rate * last_w  # keep 80% old
+            delta = w - prev_target
+            small = delta.abs() < 0.003
+            w[small] = prev_target[small]
 
-        last_w = w.copy()
-        weights.iloc[i] = w
+            keep = pd.Series(blend_rate, index=equity_syms)
+            entering = (prev_target.abs() < 1e-12) & (w.abs() > 1e-12)
+            exiting = (prev_target.abs() > 1e-12) & (w.abs() < 1e-12)
+            flipping = (
+                (prev_target.abs() > 1e-12)
+                & (w.abs() > 1e-12)
+                & (np.sign(prev_target) != np.sign(w))
+            )
+            keep[entering] = min(blend_rate, 0.72)
+            keep[exiting] = 0.50
+            keep[flipping] = 0.30
+
+            w = (1 - keep) * w + keep * prev_target
+            w[(w.abs() < 0.002) & exiting] = 0.0
+
+        if capacity_model is not None:
+            nav_now_usd = float(max(nav_usd * running_nav, nav_usd * 0.30))
+            delta_w = w - prev_target
+            for sym, delta in delta_w.items():
+                if abs(delta) < 1e-4:
+                    continue
+                sid = symbol_to_id.get(sym)
+                if sid is None:
+                    continue
+                snapshot = build_liquidity_snapshot(
+                    symbol_id=sid,
+                    symbol=sym,
+                    i=i,
+                    prices=prices,
+                    adv_usd_frame=adv_usd,
+                    daily_vol_frame=daily_vol_for_capacity,
+                    participation_limit=capacity_participation_limit,
+                    impact_limit_bps=capacity_impact_limit_bps,
+                    max_spread_bps=capacity_max_spread_bps,
+                )
+                order_notional = abs(float(delta)) * nav_now_usd
+                estimate = capacity_model.estimate_order(snapshot, order_notional)
+                max_capacity_util = max(max_capacity_util, float(estimate.utilization))
+                if estimate.utilization <= 1.0:
+                    continue
+                allowed_delta = float(estimate.max_order_notional_usd / max(nav_now_usd, 1e-12))
+                adjusted_delta = np.sign(delta) * max(allowed_delta, 0.0)
+                w[sym] = prev_target[sym] + adjusted_delta
+                capacity_clamp_events += 1
+
+        target_w = w.clip(lower=-max_pos * 0.45, upper=max_pos)
+        target_hedge = 0.0
+        if hedge_available and crisis_hedge_max > 0 and crisis_score > 0.10:
+            beta_row = rolling_beta.iloc[i].reindex(equity_syms).fillna(1.0)
+            portfolio_beta = float((target_w * beta_row).sum())
+            excess_beta = max(portfolio_beta - crisis_beta_floor, 0.0)
+            if excess_beta > 0:
+                hedge_mult = min(1.0, 0.35 + crisis_score * crisis_hedge_strength)
+                target_hedge = -float(np.clip(excess_beta * hedge_mult, 0.0, crisis_hedge_max))
+
+        live_row = pd.Series(0.0, index=trade_cols)
+        live_row.loc[equity_syms] = target_w * overlay_scale if overlay_scale < 1.0 else target_w.copy()
+        if hedge_available:
+            live_row.loc[hedge_symbol] = target_hedge
+        weights.iloc[i] = live_row
+
+    fast_mean_reversion = build_fast_mean_reversion_overlay(
+        strategies.get("mean_reversion"),
+        prices,
+        returns,
+        equity_syms,
+        regime_info=regime_info,
+    )
+    weights.loc[:, equity_syms] = weights[equity_syms].add(fast_mean_reversion, fill_value=0.0)
 
     # Vol targeting
-    port_ret = (weights.shift(1) * returns[equity_syms]).sum(axis=1)
+    port_ret = (weights.shift(1) * returns[trade_cols]).sum(axis=1)
     port_rvol = port_ret.rolling(20, min_periods=10).std() * np.sqrt(252)
 
     final_weights = weights.copy()
@@ -734,7 +1576,17 @@ def build_multi_strategy_portfolio(strategies, prices, returns, env, breadth,
         scale = float(np.clip(scale, 0.3, 2.0))
         final_weights.iloc[i] = weights.iloc[i] * scale
 
-    return final_weights
+    diagnostics = {
+        "allocator_enabled": bool(allocator_diag.get("allocator_enabled", False)),
+        "allocator_capacity_updates": int(allocator_diag.get("allocator_capacity_updates", 0)),
+        "allocator_weight_entropy": float(allocator_diag.get("allocator_weight_entropy", np.nan)),
+        "high_52w_active_pct": float(high_52w_active_pct),
+        "capacity_constraints_enabled": bool(capacity_model is not None),
+        "capacity_clamp_events": int(capacity_clamp_events),
+        "max_capacity_utilization_seen": float(max_capacity_util),
+    }
+
+    return final_weights, diagnostics
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -764,6 +1616,15 @@ def monte_carlo(rets, n_sims=10000, n_days=252):
         pk = np.maximum.accumulate(results[i])
         dds[i] = ((results[i] - pk) / np.where(pk > 0, pk, 1)).min()
     return terminal, dds
+
+
+def elapsed_years_from_index(index):
+    if index is None or len(index) < 2:
+        return max((len(index) if index is not None else 0) / 252.0, 1 / 252.0)
+    start = pd.Timestamp(index[0])
+    end = pd.Timestamp(index[-1])
+    days = max((end - start).days, 1)
+    return max(days / 365.25, 1 / 252.0)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -807,8 +1668,21 @@ def run(args):
         all_data[sym] = df
     dm.disconnect_all()
 
+    all_data, dropped_histories, latest_date = filter_histories_for_backtest(all_data, universe)
+    if dropped_histories:
+        reason_counts = pd.Series([reason for _, _, reason, _, _ in dropped_histories]).value_counts()
+        print(
+            "\nDropped for history hygiene: "
+            + ", ".join(f"{reason}={count}" for reason, count in reason_counts.items())
+        )
+        for sym, atype, reason, n_bars, end_date in dropped_histories[:12]:
+            print(f"  - {sym:8s} ({atype:10s}) {reason:14s} rows={n_bars:4d} end={end_date}")
+        if len(dropped_histories) > 12:
+            print(f"  ... {len(dropped_histories) - 12} more\n")
+
     total_bars = sum(len(df) for df in all_data.values())
-    print(f"\nTotal: {len(all_data)} instruments, {total_bars:,} bars\n")
+    latest_str = latest_date.date().isoformat() if latest_date is not None else "n/a"
+    print(f"\nTotal: {len(all_data)} instruments, {total_bars:,} bars | Latest: {latest_str}\n")
 
     prices, volumes, symbols = build_price_matrix(all_data)
     if prices is None:
@@ -842,23 +1716,7 @@ def run(args):
 
     # Strategy correlation matrix
     print("  ── Strategy Correlation Matrix ──")
-    strat_returns = {}
-    for name, sig in strategies.items():
-        # Simple long-top-20 / short-bottom-20 portfolio return
-        n = 20
-        daily_r = pd.Series(0.0, index=prices.index)
-        for i in range(280, len(prices)):
-            row = sig.iloc[i].dropna()
-            if len(row) < 40:
-                continue
-            top = row.nlargest(n).index
-            bot = row.nsmallest(n).index
-            ret_top = returns[list(top)].iloc[i].mean()
-            ret_bot = returns[list(bot)].iloc[i].mean()
-            daily_r.iloc[i] = ret_top - ret_bot
-        strat_returns[name] = daily_r.iloc[280:]
-
-    strat_df = pd.DataFrame(strat_returns)
+    strat_df = compute_strategy_test_returns(strategies, returns, equity_syms)
     corr = strat_df.corr()
     names_short = ["Mom", "MRev", "Qual", "BAB", "Carry", "SecRt", "EDrift", "52wH"]
     print(f"  {'':>8}", end="")
@@ -879,7 +1737,7 @@ def run(args):
 
     # Individual strategy Sharpes
     print("  ── Individual Strategy Sharpes (L/S top/bottom 20) ──")
-    for name, n_short_name in zip(strat_returns, names_short):
+    for name, n_short_name in zip(strat_df.columns, names_short):
         s = sharpe(strat_df[name])
         print(f"  {n_short_name:>8}: {s:+.2f}")
     print()
@@ -887,6 +1745,17 @@ def run(args):
     # Environment & breadth
     env = compute_environment(prices)
     breadth = compute_breadth(prices, equity_syms)
+    regime_info = compute_regime_states(prices, equity_syms)
+    regime_counts = regime_info["regime_label"].value_counts()
+    print("  Regime mix:")
+    for label, count in regime_counts.items():
+        if label == "WARMUP":
+            continue
+        pct = count / max(len(regime_info), 1)
+        print(f"    {label:<20s} {count:>4d} days ({pct:>5.1%})")
+    if len(regime_counts) == 1 and "WARMUP" in regime_counts:
+        print("    warmup only (not enough history for tracker)")
+    print()
 
     # ── Build multi-strategy portfolio ──
     print("=" * 70)
@@ -896,19 +1765,49 @@ def run(args):
           f"Rebal: {args.rebal_freq}d | Max pos: {args.max_pos:.0%}")
     print(f"  Target gross: {args.target_gross:.1f}x | "
           f"Long: {args.n_long} | Short: {args.n_short}\n")
+    print(f"  Crisis hedge max: {args.crisis_hedge_max:.0%} | "
+          f"Pre-emptive de-risk: {args.preemptive_de_risk:.0%}\n")
 
     t0 = time.time()
-    weights = build_multi_strategy_portfolio(
+    weights, portfolio_diag = build_multi_strategy_portfolio(
         strategies, prices, returns, env, breadth, equity_syms,
         args.target_vol, args.rebal_freq, args.max_pos,
         args.n_long, args.n_short, args.target_gross,
+        regime_info=regime_info,
+        hedge_symbol="SPY",
+        crisis_hedge_max=args.crisis_hedge_max,
+        crisis_hedge_strength=args.crisis_hedge_strength,
+        crisis_beta_floor=args.crisis_beta_floor,
+        preemptive_de_risk=args.preemptive_de_risk,
+        hedge_lookback=args.hedge_lookback,
+        volumes=volumes,
+        nav_usd=args.nav,
+        use_dynamic_allocator=not args.disable_dynamic_allocator,
+        use_capacity_constraints=not args.disable_capacity_constraints,
+        capacity_impact_k=args.capacity_impact_k,
+        capacity_participation_limit=args.capacity_participation_limit,
+        capacity_impact_limit_bps=args.capacity_impact_limit_bps,
+        capacity_max_spread_bps=args.capacity_max_spread_bps,
     )
     weights = weights.fillna(0)
     print(f"  Portfolio construction: {time.time()-t0:.1f}s\n")
+    if portfolio_diag.get("allocator_enabled"):
+        print(
+            f"  Dynamic allocator: on | Capacity updates: {portfolio_diag.get('allocator_capacity_updates', 0)} "
+            f"| Entropy: {portfolio_diag.get('allocator_weight_entropy', float('nan')):.2f}"
+        )
+    else:
+        print("  Dynamic allocator: off")
+    print(
+        f"  52w sleeve active: {portfolio_diag.get('high_52w_active_pct', 1.0):.1%} | "
+        f"Capacity clamps: {portfolio_diag.get('capacity_clamp_events', 0)} "
+        f"(max util seen: {portfolio_diag.get('max_capacity_utilization_seen', 0.0):.2f}x)\n"
+    )
 
     # ── Results ──
     warmup = 300
-    port_ret = (weights.shift(1) * returns[equity_syms]).sum(axis=1)
+    trade_cols = list(weights.columns)
+    port_ret = (weights.shift(1) * returns[trade_cols]).sum(axis=1)
     turnover = weights.diff().abs().sum(axis=1)
     tx_cost = turnover * (args.slippage + 1.0) / 10000
     net_ret = port_ret - tx_cost
@@ -917,14 +1816,20 @@ def run(args):
     turnover_post = turnover.iloc[warmup:]
 
     equity_curve = args.nav * (1 + net_ret).cumprod()
+    lp_ret = apply_hedge_fund_fees(net_ret, args.mgmt_fee, args.perf_fee)
+    lp_equity_curve = args.nav * (1 + lp_ret).cumprod()
     dates = equity_curve.index
-    n_years = len(net_ret) / 252
+    n_years = elapsed_years_from_index(dates)
 
     cagr = (equity_curve.iloc[-1] / equity_curve.iloc[0]) ** (1 / max(n_years, 0.01)) - 1
     s = sharpe(net_ret)
     so = sortino(net_ret)
     dd = max_dd(equity_curve)
     cal = cagr / abs(dd) if abs(dd) > 1e-12 else 0
+    lp_cagr = (lp_equity_curve.iloc[-1] / lp_equity_curve.iloc[0]) ** (1 / max(n_years, 0.01)) - 1
+    lp_s = sharpe(lp_ret)
+    lp_so = sortino(lp_ret)
+    lp_dd = max_dd(lp_equity_curve)
     avg_long = weights_post.clip(lower=0).sum(axis=1).mean()
     avg_short = weights_post.clip(upper=0).abs().sum(axis=1).mean()
     avg_gross = weights_post.abs().sum(axis=1).mean()
@@ -933,35 +1838,43 @@ def run(args):
     tx_bps = tx_cost.iloc[warmup:].mean() * 252 * 10000 if len(tx_cost) > warmup else 0
 
     spy_ret = (prices["SPY"].pct_change().fillna(0)).iloc[warmup:]
+    spy_ret = spy_ret.reindex(net_ret.index).fillna(0.0)
     spy_eq = args.nav * (1 + spy_ret).cumprod()
     spy_cagr = (spy_eq.iloc[-1] / spy_eq.iloc[0]) ** (1 / max(n_years, 0.01)) - 1
     spy_sharpe = sharpe(spy_ret)
     spy_dd = max_dd(spy_eq)
 
     print("  ── Aggregate ──")
-    print(f"  CAGR:          {cagr:+.2%}   (SPY: {spy_cagr:+.2%})  {'*** ALPHA ***' if cagr > spy_cagr else ''}")
-    print(f"  Sharpe:        {s:.2f}      (SPY: {spy_sharpe:.2f})  {'*** TARGET' if s >= 1.0 else '✓' if s > spy_sharpe else ''}")
-    print(f"  Sortino:       {so:.2f}")
+    print(f"  Gross CAGR:    {cagr:+.2%}   (SPY: {spy_cagr:+.2%})  {'*** ALPHA ***' if cagr > spy_cagr else ''}")
+    print(f"  Gross Sharpe:  {s:.2f}      (SPY: {spy_sharpe:.2f})  {'*** TARGET' if s >= args.lp_target_sharpe else '✓' if s > spy_sharpe else ''}")
+    print(f"  Gross Sortino: {so:.2f}")
     print(f"  Calmar:        {cal:.2f}")
-    print(f"  Max DD:        {dd:.2%}   (SPY: {spy_dd:.2%})  {'✓' if abs(dd) < abs(spy_dd) else ''}")
+    print(f"  LP Net CAGR:   {lp_cagr:+.2%}   (after {args.mgmt_fee:.0%}/{args.perf_fee:.0%})")
+    print(f"  LP Net Sharpe: {lp_s:.2f}")
+    print(f"  LP Net Sortino:{lp_so:.2f}")
+    print(f"  LP Net Max DD: {lp_dd:.2%}")
+    print(f"  Gross Max DD:  {dd:.2%}   (SPY: {spy_dd:.2%})  {'✓' if abs(dd) < abs(spy_dd) else ''}")
     print(f"  Final NAV:     ${equity_curve.iloc[-1]:,.0f}  (SPY: ${spy_eq.iloc[-1]:,.0f})")
+    print(f"  LP NAV:        ${lp_equity_curve.iloc[-1]:,.0f}")
     print(f"  Avg long:      {avg_long:.2f}x")
     print(f"  Avg short:     {avg_short:.2f}x")
     print(f"  Avg gross:     {avg_gross:.2f}x | Net: {avg_net:+.2f}x")
     print(f"  Turnover:      {avg_turn:.0f}x/yr")
     print(f"  Tx costs:      {tx_bps:.0f} bps/yr")
+    print(f"  Sample window: {dates[0].date()} -> {dates[-1].date()} ({n_years:.2f} years)")
     print()
 
     # Year by year
-    print("  ── Year-by-Year: v4 vs SPY ──")
-    print(f"  {'Year':<6} {'v4 Ret':>8} {'SPY':>8} {'Alpha':>8} {'v4 Shp':>8} {'SPY Shp':>8} {'v4 DD':>8} {'SPY DD':>8} {'Win':>4}")
+    print("  ── Year-by-Year: LP Net vs SPY ──")
+    print(f"  {'Year':<6} {'LP Ret':>8} {'SPY':>8} {'Alpha':>8} {'LP Shp':>8} {'SPY Shp':>8} {'LP DD':>8} {'SPY DD':>8} {'Hit':>4}")
     print("  " + "-" * 74)
     loss_years = beat_spy = beat_sharpe = beat_dd = 0
+    hit_return = hit_sharpe = hit_both = 0
 
     for year in sorted(set(d.year if hasattr(d, 'year') else d.date().year for d in dates)):
-        mask = pd.Series([d.year if hasattr(d, 'year') else d.date().year for d in dates], index=net_ret.index) == year
-        yr = net_ret[mask]
-        yr_eq = equity_curve[mask]
+        mask = pd.Series([d.year if hasattr(d, 'year') else d.date().year for d in dates], index=lp_ret.index) == year
+        yr = lp_ret[mask]
+        yr_eq = lp_equity_curve[mask]
         if len(yr) < 5:
             continue
         yr_ret = (yr_eq.iloc[-1] / yr_eq.iloc[0]) - 1
@@ -976,11 +1889,16 @@ def run(args):
         spy_yr_d = max_dd(spy_yr_eq) if len(spy_yr_eq) > 1 else 0
 
         alpha = yr_ret - spy_yr_ret
-        win = "Y" if yr_ret > 0 else "N"
+        meets_return = yr_ret >= args.lp_target_return
+        meets_sharpe = yr_s >= args.lp_target_sharpe
+        win = "Y" if meets_return and meets_sharpe else "N"
         if yr_ret <= 0: loss_years += 1
         if yr_ret > spy_yr_ret: beat_spy += 1
         if yr_s > spy_yr_s: beat_sharpe += 1
         if abs(yr_d) < abs(spy_yr_d): beat_dd += 1
+        if meets_return: hit_return += 1
+        if meets_sharpe: hit_sharpe += 1
+        if meets_return and meets_sharpe: hit_both += 1
 
         print(f"  {year:<6} {yr_ret:>+7.2%} {spy_yr_ret:>+7.2%} {alpha:>+7.2%} "
               f"{yr_s:>7.2f}  {spy_yr_s:>7.2f}  {yr_d:>+7.2%} {spy_yr_d:>+7.2%} {win:>4}")
@@ -991,6 +1909,9 @@ def run(args):
     print(f"  Beat SPY return:  {beat_spy}/{total_years}")
     print(f"  Beat SPY Sharpe:  {beat_sharpe}/{total_years}")
     print(f"  Beat SPY MaxDD:   {beat_dd}/{total_years}")
+    print(f"  Years >= {args.lp_target_return:.0%} net: {hit_return}/{total_years}")
+    print(f"  Years >= {args.lp_target_sharpe:.1f} Sharpe: {hit_sharpe}/{total_years}")
+    print(f"  Years hitting both hurdles: {hit_both}/{total_years}")
     print()
 
     # Sector attribution
@@ -1029,9 +1950,9 @@ def run(args):
     print()
 
     # Monte Carlo
-    if len(net_ret) > 50:
+    if len(lp_ret) > 50:
         print("  ── Monte Carlo (10K paths, 1yr) ──")
-        terminal, dds_mc = monte_carlo(net_ret)
+        terminal, dds_mc = monte_carlo(lp_ret)
         print(f"  Median return:  {np.median(terminal)-1:+.2%}")
         print(f"  5th pctl:       {np.percentile(terminal,5)-1:+.2%}")
         print(f"  95th pctl:      {np.percentile(terminal,95)-1:+.2%}")
@@ -1054,6 +1975,36 @@ if __name__ == "__main__":
     p.add_argument("--max-pos", type=float, default=0.06)
     p.add_argument("--n-long", type=int, default=50)
     p.add_argument("--n-short", type=int, default=25)
+    p.add_argument("--preemptive-de-risk", type=float, default=0.0,
+                   help="Maximum proactive gross trim from crisis signals before drawdown breaker")
+    p.add_argument("--crisis-hedge-max", type=float, default=0.0,
+                   help="Maximum SPY hedge weight when market stress is elevated")
+    p.add_argument("--crisis-hedge-strength", type=float, default=0.75,
+                   help="How aggressively excess beta is hedged during crisis regimes")
+    p.add_argument("--crisis-beta-floor", type=float, default=0.15,
+                   help="Leave this much net beta unhedged before crisis hedge kicks in")
+    p.add_argument("--hedge-lookback", type=int, default=63,
+                   help="Lookback window for portfolio beta estimation used by crisis hedge")
+    p.add_argument("--mgmt-fee", type=float, default=0.02,
+                   help="Annual management fee for LP net reporting")
+    p.add_argument("--perf-fee", type=float, default=0.20,
+                   help="Incentive fee on gains above high-water mark")
+    p.add_argument("--lp-target-return", type=float, default=0.15,
+                   help="Annual LP net return hurdle")
+    p.add_argument("--lp-target-sharpe", type=float, default=1.0,
+                   help="Annual LP net Sharpe hurdle")
+    p.add_argument("--disable-dynamic-allocator", action="store_true",
+                   help="Disable dynamic allocator-driven strategy reweighting")
+    p.add_argument("--disable-capacity-constraints", action="store_true",
+                   help="Disable capacity-aware trade clamping during rebalances")
+    p.add_argument("--capacity-impact-k", type=float, default=0.45,
+                   help="Square-root impact coefficient used by liquidity capacity model")
+    p.add_argument("--capacity-participation-limit", type=float, default=0.05,
+                   help="Max participation of ADV per rebalance trade")
+    p.add_argument("--capacity-impact-limit-bps", type=float, default=15.0,
+                   help="Max allowed impact per rebalance trade in bps before clamping")
+    p.add_argument("--capacity-max-spread-bps", type=float, default=14.0,
+                   help="Spread threshold for capacity penalty")
     p.add_argument("--no-cache", action="store_true")
     args = p.parse_args()
 

@@ -195,8 +195,28 @@ cp .env.example .env
 # Add your API keys:
 #   IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID
 #   POLYGON_API_KEY
+#   ALPHAVANTAGE_API_KEY   (optional, enables richer event/revision research)
 #   ALPACA_API_KEY, ALPACA_API_SECRET
 ```
+
+### Optional: Alpha Vantage PIT Enrichment
+
+```bash
+# Backfill event/revision/news data into local PIT stores
+./.venv/bin/python scripts/backfill_alpha_vantage_pit.py --max-symbols 50 --requests-per-minute 10
+
+# Full-universe local cache hydrate (run once; saves raw API payloads on disk)
+./.venv/bin/python scripts/backfill_alpha_vantage_pit.py --requests-per-minute 20 --chunk-size 25
+
+# Offline verification (no API calls; reads only local cache)
+./.venv/bin/python scripts/backfill_alpha_vantage_pit.py --cache-only --requests-per-minute 20
+```
+
+Raw payload cache location:
+- `data/cache/pit/alpha_vantage/{json,news,csv}`
+- Backtests read event/fundamental PIT data from local SQLite files:
+  - `data/events.db`
+  - `data/fundamentals.db`
 
 ### Running Backtests
 

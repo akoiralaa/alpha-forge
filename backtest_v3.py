@@ -39,6 +39,7 @@ import yaml
 
 from src.data.ingest.base import AssetClass
 from src.data.ingest.data_manager import DataManager, build_data_manager_from_env
+from src.regime.tracker import RegimeTracker
 
 
 ASSET_TYPES = {}
@@ -522,8 +523,99 @@ def compute_breadth(prices, sma200):
     return breadth.rolling(5, min_periods=1).mean()  # smooth 5-day
 
 
+def build_regime_features(prices, equity_syms, spy_col="SPY"):
+    """Daily market features for regime classification."""
+    if spy_col not in prices.columns:
+        spy_col = prices.columns[0]
+
+    spy = prices[spy_col]
+    spy_ret = spy.pct_change().fillna(0)
+    rvol20 = spy_ret.rolling(20, min_periods=20).std() * np.sqrt(252)
+    ret_63 = spy / spy.shift(63) - 1
+    spy_sma200 = spy.rolling(200, min_periods=200).mean()
+    trend_gap = spy / spy_sma200 - 1
+
+    sma200 = prices[equity_syms].rolling(200, min_periods=200).mean()
+    breadth = compute_breadth(prices[equity_syms], sma200)
+
+    features = pd.DataFrame(
+        {
+            "vol_20": rvol20,
+            "ret_63": ret_63,
+            "breadth": breadth,
+            "trend_gap": trend_gap,
+        },
+        index=prices.index,
+    )
+    return features.replace([np.inf, -np.inf], np.nan)
+
+
+def compute_regime_states(prices, equity_syms, fit_window=504, refit_every=63):
+    """
+    Fit the repo's HMM+GMM tracker on trailing market features and update online.
+
+    We only enable shorts when the smoothed regime is high-vol and confidence is
+    decent. In all other regimes we prefer long-only participation.
+    """
+    features = build_regime_features(prices, equity_syms)
+    defaults = {
+        "regime_label": "WARMUP",
+        "position_scale": 1.0,
+        "signal_gate": True,
+        "allow_shorts": False,
+        "confidence": 0.0,
+    }
+    regime_info = pd.DataFrame(defaults, index=prices.index)
+
+    valid = features.dropna()
+    if len(valid) <= fit_window:
+        return regime_info
+
+    tracker = None
+    last_fit_pos = -1
+
+    for pos, (dt, row) in enumerate(valid.iterrows()):
+        if pos < fit_window:
+            continue
+
+        if tracker is None or (pos - last_fit_pos) >= refit_every:
+            train = valid.iloc[max(0, pos - fit_window):pos]
+            if len(train) < fit_window:
+                continue
+            try:
+                tracker = RegimeTracker(n_regimes=5)
+                tracker.fit(train.values)
+                last_fit_pos = pos
+            except Exception:
+                tracker = None
+                continue
+
+        if tracker is None:
+            continue
+
+        try:
+            state = tracker.update(row.values)
+        except Exception:
+            continue
+
+        allow_shorts = (
+            state.signal_gate_open
+            and state.confidence >= 0.45
+            and state.regime_label in {"HIGH_VOL_TRENDING", "HIGH_VOL_CHAOTIC"}
+        )
+
+        regime_info.loc[dt, "regime_label"] = state.regime_label
+        regime_info.loc[dt, "position_scale"] = state.position_scale
+        regime_info.loc[dt, "signal_gate"] = state.signal_gate_open
+        regime_info.loc[dt, "allow_shorts"] = allow_shorts
+        regime_info.loc[dt, "confidence"] = state.confidence
+
+    return regime_info.ffill()
+
+
 def build_portfolio(composite, prices, env, target_vol, rebal_freq, max_pos,
-                    n_long=50, n_short=20, target_gross=1.5, blend_rate=0.80):
+                    n_long=50, n_short=20, target_gross=1.5, blend_rate=0.92,
+                    regime_info=None):
     """
     v3.1 Portfolio construction with:
     - Drawdown circuit breaker (hard deleveraging at -15%, -25%)
@@ -550,7 +642,8 @@ def build_portfolio(composite, prices, env, target_vol, rebal_freq, max_pos,
         sector_stocks[sec].append(sym)
 
     weights = pd.DataFrame(0.0, index=prices.index, columns=equity_syms)
-    last_w = pd.Series(0.0, index=equity_syms)
+    target_w = pd.Series(0.0, index=equity_syms)
+    live_w = pd.Series(0.0, index=equity_syms)
 
     # Track portfolio equity for drawdown circuit breaker
     running_nav = 1.0
@@ -559,7 +652,7 @@ def build_portfolio(composite, prices, env, target_vol, rebal_freq, max_pos,
     for i in range(252, len(prices)):
         # ── Drawdown circuit breaker ──
         if i > 252:
-            day_ret = (last_w * returns[equity_syms].iloc[i]).sum()
+            day_ret = (live_w * returns[equity_syms].iloc[i]).sum()
             running_nav *= (1 + day_ret)
             peak_nav = max(peak_nav, running_nav)
 
@@ -574,20 +667,30 @@ def build_portfolio(composite, prices, env, target_vol, rebal_freq, max_pos,
         elif current_dd < -0.12:
             dd_scale = 0.85
 
+        regime_allows_shorts = True
+        if regime_info is not None:
+            regime_row = regime_info.iloc[i]
+            regime_allows_shorts = bool(regime_row.get("allow_shorts", False))
+
+        overlay_scale = dd_scale
+
         if i % rebal_freq != 0 and i > 252:
-            weights.iloc[i] = last_w * dd_scale if dd_scale < 1.0 else last_w
+            live_w = target_w * overlay_scale if overlay_scale < 1.0 else target_w.copy()
+            weights.iloc[i] = live_w
             continue
 
         sig = composite.iloc[i]
         valid = sig.dropna()
         valid = valid[valid.abs() > 0.01]
         if len(valid) < 20:
-            weights.iloc[i] = last_w
+            live_w = target_w * overlay_scale if overlay_scale < 1.0 else target_w.copy()
+            weights.iloc[i] = live_w
             continue
 
         e = env.iloc[i]
         b = breadth.iloc[i] if i < len(breadth) else 0.5
         is_bearish = e < 0.75 or b < 0.40  # vol OR breadth says bear
+        shorts_active = regime_allows_shorts and is_bearish
 
         # ── Select longs: top stocks from each sector ──
         long_picks = []
@@ -606,7 +709,7 @@ def build_portfolio(composite, prices, env, target_vol, rebal_freq, max_pos,
                     long_picks.append((sym, sector_sigs[sym]))
 
             # Short: require multi-factor conviction in bearish environments
-            if is_bearish:
+            if shorts_active:
                 n_s = max(int(len(sector_sigs) * 0.15), 1)
                 for sym in sector_sigs.tail(n_s).index:
                     if sector_sigs[sym] < -0.25:  # very high bar for shorts
@@ -625,7 +728,7 @@ def build_portfolio(composite, prices, env, target_vol, rebal_freq, max_pos,
         # Low breadth (<40%): reduced long, add shorts
         breadth_mult = np.clip(b * 1.5, 0.5, 1.2)  # 0.5 at 33% breadth, 1.2 at 80%
 
-        if is_bearish:
+        if shorts_active:
             long_budget = target_gross * e * 0.65 * breadth_mult
             short_budget = target_gross * 0.35 * (1 - breadth_mult / 1.2)
         else:
@@ -633,8 +736,8 @@ def build_portfolio(composite, prices, env, target_vol, rebal_freq, max_pos,
             short_budget = 0.0
 
         # Apply drawdown scale
-        long_budget *= dd_scale
-        short_budget *= dd_scale
+        long_budget *= overlay_scale
+        short_budget *= overlay_scale
 
         if long_picks:
             long_vols = {s: inst_vol[s].iloc[i] if s in inst_vol.columns else 0.20
@@ -655,15 +758,32 @@ def build_portfolio(composite, prices, env, target_vol, rebal_freq, max_pos,
                 raw_w = -short_budget * short_inv[sym] / total_inv
                 w[sym] = float(np.clip(raw_w, -max_pos * 0.5, 0))
 
-        # High blend rate to reduce turnover
+        # Exit stale names faster than we enter fresh ones, which keeps the book
+        # concentrated without giving up the turnover benefits of slower blending.
         if i > 252:
-            delta = w - last_w
+            prev_target = target_w.copy()
+            delta = w - prev_target
             small_changes = delta.abs() < 0.003
-            w[small_changes] = last_w[small_changes]
-            w = (1 - blend_rate) * w + blend_rate * last_w  # keep 92% old, add 8% new
+            w[small_changes] = prev_target[small_changes]
 
-        last_w = w.copy()
-        weights.iloc[i] = w
+            keep = pd.Series(blend_rate, index=equity_syms)
+            entering = (prev_target.abs() < 1e-12) & (w.abs() > 1e-12)
+            exiting = (prev_target.abs() > 1e-12) & (w.abs() < 1e-12)
+            flipping = (
+                (prev_target.abs() > 1e-12)
+                & (w.abs() > 1e-12)
+                & (np.sign(prev_target) != np.sign(w))
+            )
+            keep[entering] = min(blend_rate, 0.70)
+            keep[exiting] = 0.55
+            keep[flipping] = 0.35
+
+            w = (1 - keep) * w + keep * prev_target
+            w[(w.abs() < 0.002) & exiting] = 0.0
+
+        target_w = w.clip(lower=-max_pos * 0.5, upper=max_pos)
+        live_w = target_w * overlay_scale if overlay_scale < 1.0 else target_w.copy()
+        weights.iloc[i] = live_w
 
     # ── Portfolio-level vol targeting ──
     port_ret = (weights.shift(1) * returns[equity_syms]).sum(axis=1)
@@ -805,8 +925,19 @@ def run(args):
         print(f"    {sym:>8s} {val:>+.3f}  ({sec})")
     print()
 
-    # ── Environment ──
+    # ── Environment / regime ──
     env = compute_environment(prices)
+    regime_info = compute_regime_states(prices, tradeable)
+    regime_counts = regime_info["regime_label"].value_counts()
+    print("  Regime mix:")
+    for label, count in regime_counts.items():
+        if label == "WARMUP":
+            continue
+        pct = count / max(len(regime_info), 1)
+        print(f"    {label:<20s} {count:>4d} days ({pct:>5.1%})")
+    if len(regime_counts) == 1 and "WARMUP" in regime_counts:
+        print("    warmup only (not enough history for tracker)")
+    print()
 
     # ── Portfolio construction ──
     print("=" * 70)
@@ -825,6 +956,7 @@ def run(args):
         args.target_vol, args.rebal_freq, args.max_pos,
         n_long=args.n_long, n_short=args.n_short,
         target_gross=args.target_gross,
+        regime_info=regime_info,
     )
     weights = weights.fillna(0)
     print(f"{time.time()-t0:.1f}s\n")

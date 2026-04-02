@@ -123,6 +123,37 @@ class TradingMetrics:
             ["signal_name"],
             registry=self.registry,
         )
+        self.strategy_weight = Gauge(
+            "trading_strategy_weight", "Dynamic capital weight by strategy",
+            ["strategy_name"],
+            registry=self.registry,
+        )
+        self.strategy_realized_sharpe = Gauge(
+            "trading_strategy_realized_sharpe", "Realized annualized Sharpe by strategy",
+            ["strategy_name"],
+            registry=self.registry,
+        )
+        self.strategy_expected_sharpe = Gauge(
+            "trading_strategy_expected_sharpe", "Expected annualized Sharpe by strategy",
+            ["strategy_name"],
+            registry=self.registry,
+        )
+        self.strategy_performance_gap = Gauge(
+            "trading_strategy_performance_gap", "Realized minus expected Sharpe by strategy",
+            ["strategy_name"],
+            registry=self.registry,
+        )
+        self.strategy_capacity_utilization = Gauge(
+            "trading_strategy_capacity_utilization",
+            "Capacity utilization by strategy (1.0 means at estimated limit)",
+            ["strategy_name"],
+            registry=self.registry,
+        )
+        self.strategy_avg_impact_bps = Gauge(
+            "trading_strategy_avg_impact_bps", "Estimated average impact in bps by strategy",
+            ["strategy_name"],
+            registry=self.registry,
+        )
 
         # ── HFT metrics ───────────────────────────────────────
 

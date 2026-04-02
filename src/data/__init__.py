@@ -8,6 +8,7 @@ def __getattr__(name):
         "UniverseManager": "src.data.universe",
         "PriceAdjuster": "src.data.adjustments",
         "FundamentalsStore": "src.data.fundamentals",
+        "EventStore": "src.data.events",
     }
     if name in _lazy:
         import importlib
@@ -22,4 +23,5 @@ __all__ = [
     "UniverseManager",
     "PriceAdjuster",
     "FundamentalsStore",
+    "EventStore",
 ]
