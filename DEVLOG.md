@@ -1,5 +1,123 @@
 # One Brain Fund Devlog
 
+## 2026-04-02
+
+### Focus
+- Start hardening `v8` for live deployment quality by executing roadmap items `#2 -> #5`:
+  - constrained sweep runner
+  - sleeve governance / kill switches
+  - more realistic execution-cost model
+  - stricter event alpha selectivity
+
+### What Changed
+
+#### #2 Constrained `v8` sweep harness
+- Added `scripts/run_v8_constraint_sweep.py`.
+- Runs a deterministic parameter grid subset and writes machine-readable output to:
+  - `data/reports/v8_constraint_sweep.csv`
+- Adds a constrained objective that prioritizes LP net CAGR while penalizing runs that violate:
+  - max DD cap
+  - turnover cap
+
+#### #3 Sleeve governance / kill-switch layer
+- Added sleeve-level governance in `backtest_v8.py`:
+  - rolling Sharpe and hit-rate scoring
+  - rolling drawdown penalties
+  - cooldown kill-switch when sleeve quality collapses
+- Governance now scales these sleeves independently:
+  - core
+  - etf
+  - futures
+  - fx
+  - vix
+- Added CLI controls (`--gov-*`) and optional disable flag (`--disable-sleeve-governance`).
+
+#### #4 Execution realism upgrade
+- Replaced static turnover-only transaction costs with a dynamic model:
+  - volatility regime scaling
+  - liquidity/ADV stress scaling
+  - jump-day turnover penalty
+- Added execution controls via CLI (`--exec-*`) and diagnostics in output.
+
+#### #5 Event alpha quality upgrade
+- Strengthened `EventAlphaConfig` and sentiment ingestion filters in `src/signals/event_alpha.py`:
+  - minimum relevance and novelty gates
+  - event-type-specific minimum absolute sentiment thresholds
+  - per-symbol/day event cap
+  - burst-event decay (deconflicts noisy same-day headlines)
+- Extended `backtest_v8.py` CLI to expose these event selectivity controls.
+
+#### Validation updates
+- Added/updated tests:
+  - `tests/phase8/test_backtest_v8_helpers.py`
+    - sleeve governance cooldown behavior
+    - dynamic execution-cost stress behavior
+  - `tests/phase4/test_event_alpha.py`
+    - daily event cap selectivity
+
+#### Walk-forward / no-lookahead hardening
+- `backtest_v8.py` now supports strict out-of-sample windows:
+  - `--start-date`, `--end-date`
+  - `--eval-start`, `--eval-end`
+  - `--enforce-no-lookahead`
+- Added `--cache-complete-only` to skip any symbol missing local daily-bar cache (VX remains optional, non-blocking).
+- Added `scripts/run_v8_walk_forward.py`:
+  - builds cache-complete universe automatically
+  - runs rolling walk-forward folds using strict OOS evaluation windows
+  - writes canonical fold metrics to `data/reports/v8_walk_forward.csv`
+
+#### Constrained sweep + walk-forward run (strict)
+- Ran full constrained sweep:
+  - `./.venv/bin/python scripts/run_v8_constraint_sweep.py --max-runs 24`
+  - output: `data/reports/v8_constraint_sweep.csv`
+- Top constrained config selected:
+  - `force_event_weight=0.03`
+  - `overlay_min_signal=0.08`
+  - `etf_gross=0.20`
+  - `futures_gross=0.20`
+  - `fx_gross=0.08`
+  - `option_max_notional=0.04`
+  - `total_gross_cap=1.8`
+  - `gov_min_mult=0.30`
+  - `exec_liq_cost_mult=0.80`
+- Sweep best-row outcomes:
+  - Gross CAGR `+10.96%`
+  - Gross Sharpe `0.77`
+  - Gross Max DD `-20.39%`
+  - LP Net CAGR `+7.08%`
+  - LP Net Sharpe `0.53`
+  - LP Net Max DD `-25.20%`
+  - Turnover `16.0x/yr`
+  - Tx costs `46 bps/yr`
+- Ran strict rolling walk-forward:
+  - `./.venv/bin/python scripts/run_v8_walk_forward.py --min-train-years 5 --test-years 1 --step-years 1`
+  - output: `data/reports/v8_walk_forward.csv`
+  - folds: `14` (all completed)
+  - mean LP Net CAGR: `+6.77%`
+  - mean LP Net Sharpe: `0.38`
+  - median LP Net Max DD: `-12.72%`
+  - fold passes at target (15% CAGR + 1.0 Sharpe + DD <= 30%): `4/14`
+
+#### Locked production config + regime splits
+- Locked production config created:
+  - `config/v8_production_locked.yaml`
+  - source: top constrained row from `data/reports/v8_constraint_sweep.csv`
+- Locked walk-forward rerun (same strict settings):
+  - output: `data/reports/v8_walk_forward_locked.csv`
+  - result: unchanged from strict run (`4/14` fold passes at fund hurdle target)
+- Added and ran `scripts/run_v8_regime_splits.py` with strict no-lookahead train/test windows:
+  - requested splits: `pre_2008`, `crisis_2008`, `decade_2010s`, `regime_2020_plus`, `recent`
+  - output: `data/reports/v8_regime_splits.csv`
+  - all splits completed (`5/5 ok`)
+  - early-era validation used `--warmup-days 180 --min-rows 360` to make pre-2008 windows evaluable on available history while keeping no-lookahead policy intact
+  - LP outcomes:
+    - `pre_2008`: CAGR `-2.44%`, Sharpe `-0.13`, Max DD `-10.56%`
+    - `crisis_2008`: CAGR `-16.77%`, Sharpe `-1.56`, Max DD `-18.24%`
+    - `2010s`: CAGR `+9.25%`, Sharpe `0.68`, Max DD `-19.15%`
+    - `2020+`: CAGR `+6.28%`, Sharpe `0.52`, Max DD `-22.20%`
+    - `recent`: CAGR `+4.22%`, Sharpe `0.36`, Max DD `-13.88%`
+  - split passes at locked hedge-fund target (`15% CAGR`, `1.0 Sharpe`, DD <= `30%`): `0/5`
+
 ## 2026-04-01
 
 ### Focus
@@ -1062,3 +1180,865 @@ Current local Alpha Vantage cache footprint:
 Operational note:
 - Backtests (`v7`) read from local `data/events.db` and `data/fundamentals.db`.
 - Alpha Vantage API calls are now only needed for explicit refresh/backfill runs, not for normal backtest iteration.
+
+### v7 Richer-Signal Iteration (Revision-Flow)
+
+Date: 2026-04-02
+
+User request:
+- "use richer signal iteration for v7"
+
+Implementation:
+- `src/signals/event_alpha.py`
+  - added dedicated **revision-flow panel** from PIT analyst revision/update history:
+    - explicit `ANALYST_REVISION` pulses
+    - implicit estimate-delta pulses from `ANALYST_EST_EPS` history
+  - new config controls:
+    - `revision_flow_weight` (default `0.18`)
+    - `revision_flow_half_life_days` (default `18`)
+    - `min_revision_flow_updates` (default `1`)
+    - `revision_flow_quality_bonus` (default `0.08`)
+  - richer composite now blends:
+    - fundamental surprise/revision signal
+    - revision-flow signal
+    - sentiment/event signal
+  - added `revision_flow_coverage` to build diagnostics.
+- `backtest_v7.py`
+  - wired new args through to event-alpha config:
+    - `--revision-flow-weight`
+    - `--revision-flow-half-life-days`
+  - print diagnostics now include `revision_flow=<count>`.
+- tests:
+  - updated `tests/phase4/test_event_alpha.py` to assert revision-flow coverage/panel behavior.
+
+Validation:
+- `./.venv/bin/python -m pytest -q tests/phase4/test_event_alpha.py tests/phase9/test_intraday_alpha_paper.py tests/phase1/test_alpha_vantage_event_backfill.py`
+  - `7 passed`
+
+Backtest results on same cache state (`407/410` daily cache):
+
+| Engine | Event wt | Gross CAGR | Gross Sharpe | Gross Max DD | LP Net CAGR | LP Net Sharpe | Final NAV | >=15% net years | >=1.0 Sharpe years | Both |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `v4` baseline | n/a | `+10.97%` | `0.71` | `-29.79%` | `+7.08%` | `0.49` | `$70.63M` | `5/20` | `5/20` | `4/20` |
+| `v7` richer (auto) | `3.5%` | `+10.85%` | `0.71` | `-29.34%` | `+6.98%` | `0.49` | `$69.12M` | `5/20` | `5/20` | `4/20` |
+| `v7` richer (forced) | `5.0%` | `+11.01%` | `0.72` | `-29.45%` | `+7.11%` | `0.50` | `$71.01M` | `5/20` | `5/20` | `4/20` |
+
+Interpretation:
+- richer iteration improved the best `v7` point slightly vs prior run and vs `v4`:
+  - `+0.04%` gross CAGR vs `v4`
+  - `+0.01` gross Sharpe vs `v4`
+  - `+$0.37M` final NAV vs `v4`
+- hurdle profile remains unchanged (still misses 15% net and 1.0 yearly Sharpe in most years).
+
+### v7 Kelly + Sentiment Overlay (NLP-driven risk scaling)
+
+Date: 2026-04-02
+
+Question addressed:
+- can we apply Kelly-style position/risk scaling conditioned on market sentiment?
+
+Implementation:
+- `src/portfolio/sizing.py`
+  - added `build_fractional_kelly_overlay(...)`
+  - computes a rolling, no-lookahead fractional Kelly multiplier from historical event-sleeve edge
+  - optionally modulates that multiplier with world sentiment (from event/NLP signal stream).
+- `backtest_v7.py`
+  - added optional overlay integration after portfolio construction
+  - new CLI controls:
+    - `--enable-kelly-sentiment-overlay` (default off)
+    - `--kelly-lookback`
+    - `--kelly-min-obs`
+    - `--kelly-fraction`
+    - `--kelly-max-abs`
+    - `--kelly-min-scale`
+    - `--kelly-max-scale`
+    - `--kelly-sentiment-sensitivity`
+  - prints overlay diagnostics (avg scale, range, kelly mean, positive-day share).
+- tests:
+  - new: `tests/phase5/test_sizing.py`
+  - validates overlay directionality for positive/negative edge and sentiment shift.
+
+Validation:
+- `./.venv/bin/python -m pytest -q tests/phase5/test_sizing.py tests/phase4/test_event_alpha.py`
+  - `6 passed`
+
+Backtest A/B (`v7 --force-event-weight 0.05`, same cache/data state):
+
+| Config | Gross CAGR | Gross Sharpe | Gross Max DD | LP Net CAGR | Final NAV |
+|---|---:|---:|---:|---:|---:|
+| Kelly overlay **off** (default) | `+11.01%` | `0.72` | `-29.45%` | `+7.11%` | `$71.01M` |
+| Kelly overlay **on** | `+10.93%` | `0.73` | `-30.20%` | `+7.04%` | `$70.06M` |
+
+Overlay diagnostics (on):
+- avg scale `0.980`, range `[0.920, 1.081]`
+- kelly avg `-0.2527`, positive days `36.9%`
+
+Decision:
+- keep Kelly overlay **opt-in** (default off) for now.
+- it improved Sharpe slightly but hurt CAGR/NAV and worsened drawdown in this run.
+- next step before enabling by default: calibrate kelly from cleaner alpha sources (e.g., richer intraday/event edge + stronger sentiment quality).
+
+### Hugging Face FinBERT Enrichment Pipeline (Implemented + Run)
+
+Date: 2026-04-02
+
+User request:
+- "do it" for Hugging Face / NLP integration into `v7`.
+
+Implementation:
+- Added `src/data/ingest/finbert_event_backfill.py`
+  - scores existing PIT events with FinBERT
+  - writes enriched events back to `event_pit` with source `FINBERT_ENRICHED`
+  - uses local raw-cache (`RawDataCache`) for deterministic offline reruns
+  - supports `--cache-only`, `--since`, source/event filters, and dedupe.
+- Added CLI `scripts/backfill_finbert_pit.py`
+  - end-to-end FinBERT enrichment runner.
+- Added tests:
+  - `tests/phase1/test_finbert_event_backfill.py`
+- Updated signal source quality:
+  - `FINBERT_ENRICHED` added to `EVENT_SOURCE_QUALITY` in `src/signals/event_alpha.py`.
+- Added NLP optional deps:
+  - `pyproject.toml` optional extra `nlp = ["transformers>=4.45", "torch>=2.3"]`.
+- Updated docs:
+  - `README.md` includes FinBERT install/backfill/cache commands.
+
+Validation:
+- `./.venv/bin/python -m pytest -q tests/phase1/test_finbert_event_backfill.py tests/phase4/test_event_alpha.py tests/phase5/test_sizing.py`
+  - `8 passed`
+
+FinBERT backfill run (Hugging Face model):
+- command:
+  - `./.venv/bin/python scripts/backfill_finbert_pit.py --since 2016-01-01T00:00:00Z --sources ALPHA_VANTAGE_NEWS,ALPHA_VANTAGE_EARNINGS,ALPHA_VANTAGE_EARNINGS_EST,POLYGON_BENZINGA_NEWS,POLYGON_BENZINGA_ANALYST,POLYGON_BENZINGA_GUIDANCE,csv_ingest --event-types 'news,guidance,earnings,estimate_revision,m&a,product'`
+- output:
+  - `processed: 1391`
+  - `inserted: 1391`
+  - `raw_cache_writes: 1391`
+  - `model: ProsusAI/finbert`
+- offline verification:
+  - same command with `--cache-only`
+  - `raw_cache_hits: 1391`
+  - `raw_cache_misses: 0`
+  - `inserted: 0` (all duplicates, as expected)
+
+Post-enrichment event state:
+- `event_pit` total rows: `187,713`
+- `FINBERT_ENRICHED`: `1,391` rows
+- distinct tickers in `FINBERT_ENRICHED`: `8`
+
+`v7` post-FinBERT backtests:
+
+| Config | Gross CAGR | Gross Sharpe | Gross Max DD | LP Net CAGR | LP Net Sharpe | Final NAV |
+|---|---:|---:|---:|---:|---:|---:|
+| `v7` auto (Kelly off) | `+10.85%` | `0.71` | `-29.34%` | `+6.98%` | `0.49` | `$69.08M` |
+| `v7` force 5% (Kelly off) | `+11.01%` | `0.72` | `-29.45%` | `+7.11%` | `0.50` | `$71.01M` |
+| `v7` force 5% + Kelly on | `+10.93%` | `0.73` | `-30.20%` | `+7.04%` | `0.50` | `$70.06M` |
+
+Interpretation:
+- FinBERT integration is live and cached locally.
+- Performance impact is minimal so far because FinBERT coverage is still narrow (`8` tickers); this is a data coverage bottleneck, not a model wiring issue.
+
+### Free SEC-NLP Expansion (No Paid Data) — Completed
+
+Date: 2026-04-02
+
+Goal:
+- expand NLP sentiment coverage without paying for premium news feeds.
+
+What was implemented:
+- Added SEC-scale FinBERT enrichment pipeline:
+  - `src/data/ingest/finbert_event_backfill.py`
+  - `scripts/backfill_finbert_pit.py`
+- Added optional NLP dependencies:
+  - `pyproject.toml` optional extra `nlp` (`transformers`, `torch`)
+- Added tests:
+  - `tests/phase1/test_finbert_event_backfill.py`
+- Updated event source quality mapping:
+  - `FINBERT_ENRICHED` in `src/signals/event_alpha.py`
+- Exposed in docs:
+  - `README.md` FinBERT install and backfill commands
+
+Validation:
+- `./.venv/bin/python -m pytest -q tests/phase1/test_finbert_event_backfill.py tests/phase4/test_event_alpha.py tests/phase5/test_sizing.py`
+  - `8 passed`
+
+Full SEC FinBERT backfill run:
+- command:
+  - `./.venv/bin/python scripts/backfill_finbert_pit.py --sources SEC_SUBMISSIONS,SEC_COMPANYFACTS --event-types 'news,guidance,earnings,m&a,product' --min-confidence 0.05`
+- output:
+  - `processed: 184,383`
+  - `inserted: 182,383`
+  - `duplicates: 2,000`
+  - `raw_cache_misses/raw_cache_writes: 182,383`
+  - `model: ProsusAI/finbert`
+- cache-only verification slice:
+  - `./.venv/bin/python scripts/backfill_finbert_pit.py --cache-only ... --limit 5000`
+  - `raw_cache_hits: 5000`, `raw_cache_misses: 0`
+
+Coverage after SEC expansion:
+- `event_pit` total: `372,096`
+- `FINBERT_ENRICHED`: `185,774`
+- `SEC_SUBMISSIONS`: `162,596`
+- `SEC_COMPANYFACTS`: `21,787`
+- distinct tickers in `FINBERT_ENRICHED`: `362`
+
+Post-expansion `v7` results:
+
+| Config | Event quality | Gross CAGR | Gross Sharpe | Gross Max DD | LP Net CAGR | LP Net Sharpe | Final NAV |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `v7` auto, Kelly off | sentiment quality `0.49`, quality scale `0.53`, event wt `3.5%` | `+10.85%` | `0.71` | `-29.41%` | `+6.98%` | `0.49` | `$69.12M` |
+| `v7` force 5%, Kelly off | sentiment quality `0.49`, quality scale `0.53`, event wt `5.0%` | `+10.87%` | `0.71` | `-29.44%` | `+7.00%` | `0.49` | `$69.37M` |
+| `v7` force 5%, Kelly on | overlay avg `0.981` range `[0.920,1.081]` | `+10.85%` | `0.72` | `-30.19%` | `+6.98%` | `0.50` | `$69.16M` |
+
+Interpretation:
+- Free SEC-based NLP coverage was successfully scaled to almost full equity universe.
+- Raw coverage quality improved (`0.46 -> 0.49` sentiment quality scale), but portfolio alpha did **not** improve; final NAV declined vs prior best `v7` checkpoint.
+- Current bottleneck is **signal selectivity**, not data availability: most additional SEC-NLP events are low edge/noisy.
+
+### Event Selectivity Calibration (FINBERT/SEC filters) — Completed
+
+Date: 2026-04-02
+
+Goal:
+- verify whether filtering low-conviction FinBERT/SEC events improves `v7` vs fully unfiltered ingestion.
+
+Implementation:
+- Added conviction gates in `src/signals/event_alpha.py`:
+  - `finbert_min_abs_score`, `finbert_min_confidence`
+  - `sec_min_abs_score`, `sec_min_confidence`
+- Exposed flags in `backtest_v7.py`:
+  - `--finbert-min-abs-score`
+  - `--finbert-min-confidence`
+  - `--sec-min-abs-score`
+  - `--sec-min-confidence`
+- Added tests in `tests/phase4/test_event_alpha.py`:
+  - FinBERT high-conviction filtering
+  - SEC low-signal filtering
+
+Validation:
+- `./.venv/bin/python -m pytest -q tests/phase4/test_event_alpha.py`
+  - pass
+
+Head-to-head calibration (`--force-event-weight 0.05`, Kelly off):
+
+| Config | Events | Sentiment Quality | Gross CAGR | Gross Sharpe | Gross Max DD | LP Net CAGR | LP Net Sharpe | Final NAV |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Filtered default thresholds | `59,872` | `0.48` | `+11.09%` | `0.72` | `-29.45%` | `+7.17%` | `0.50` | `$72.05M` |
+| Unfiltered (`all mins = 0`) | `59,966` | `0.49` | `+10.87%` | `0.71` | `-29.44%` | `+7.00%` | `0.49` | `$69.37M` |
+
+Decision:
+- Keep filtered defaults as current `v7` baseline.
+- Removing filters increased event count slightly but hurt CAGR/Sharpe and reduced final NAV by ~`$2.69M`.
+- Next alpha step should focus on richer event types (analyst estimate deltas/transcript surprises) and intraday execution edge, not simply adding more low-conviction daily events.
+
+### v8 Multi-Asset Expansion + Options Execution Path (Implemented + Backtested)
+
+Date: 2026-04-02
+
+Goal:
+- expand the tradable book beyond equities and add an explicit options hedge path while keeping the v7 core.
+
+What was added:
+- New runner: `backtest_v8.py`
+  - keeps v7 equity/event core (same `EventAlphaConfig` wiring)
+  - adds alpha sleeves for:
+    - ETFs
+    - futures/commodities/bonds
+    - FX
+  - adds dedicated VIX sleeve (long-vol hedge when stress rises)
+  - adds options execution path via synthetic rolled-put overlay:
+    - notional scales only in high-crisis regimes
+    - strike/theta/payout are configurable via CLI
+    - emits a roll plan (`date`, `SPY`, put strike, target notional) for live order-routing handoff
+- New robustness controls in v8:
+  - cross-asset return sanitization to zero-out impossible jumps from futures roll/data artifacts
+  - per-asset transaction cost model (ETF/FX/futures/vol differentiated)
+  - global gross cap across combined sleeves.
+- New tests:
+  - `tests/phase8/test_backtest_v8_helpers.py`
+    - return sanitization clipping
+    - option overlay calm-regime off behavior
+    - option overlay crisis-regime activation behavior.
+
+Validation:
+- `./.venv/bin/python -m pytest -q tests/phase8/test_backtest_v8_helpers.py`
+  - `3 passed`
+- `./.venv/bin/python -m pytest -q tests/phase4/test_event_alpha.py tests/phase5/test_sizing.py`
+  - `8 passed`
+
+Backtest observations (`v8` default):
+- Universe actually traded in this run:
+  - equities `360`, ETFs `13`, futures/commod/bond `16`, FX `7`, VIX `0` (`VX` cache missing)
+- Option overlay:
+  - avg notional `0.011x`, max `0.040x`, active days `47.6%`
+- Performance:
+  - Gross CAGR `+11.51%`
+  - Gross Sharpe `0.77`
+  - Gross Max DD `-26.04%`
+  - LP Net CAGR `+7.49%` (2/20)
+  - LP Net Sharpe `0.53`
+  - Final NAV `$77.23M`
+  - LP NAV `$38.79M`
+  - Avg gross `1.74x`
+  - Tx costs `49 bps/yr`
+  - Hurdles: `Years >=15% net 6/20`, `Years >=1.0 Sharpe 6/20`, both `5/20`
+
+Sanity baseline (`v8` with all new sleeves off):
+- command:
+  - `./.venv/bin/python backtest_v8.py --etf-gross 0 --futures-gross 0 --fx-gross 0 --vix-hedge-max 0 --option-max-notional 0`
+- result:
+  - Gross CAGR `+10.66%`
+  - Gross Sharpe `0.74`
+  - Gross Max DD `-23.90%`
+  - Final NAV `$66.97M`
+
+Interpretation:
+- v8 implementation is working and materially improves over its own “core-only” mode.
+- return uplift is moderate and now plausible after artifact sanitization; no longer relies on impossible futures jumps.
+- largest remaining blocker for full multi-asset hedge behavior is missing `VX` cache coverage.
+
+Extra calibration:
+- `v8 --overlay-shorts` was tested and did **not** improve headline returns:
+  - Gross CAGR `+10.91%`, Gross Sharpe `0.77`, Final NAV `$69.84M`
+- default long-bias cross-asset overlays remain the better current baseline.
+
+### VIX Sleeve Block Fix (`VX` cache gap) — Implemented
+
+Date: 2026-04-02
+
+Issue:
+- `VX_VOLATILITY.parquet` was missing because IBKR was unavailable and Polygon/Alpaca do not return `VX`.
+
+Fix:
+- Updated `scripts/backfill_daily_bars.py` with two-level fallback for `VOLATILITY` symbols (`VX`, `VIX`, `^VIX`):
+  1. Alpha Vantage daily VIX proxy (`TIME_SERIES_DAILY`, symbol `VIX`) when DNS/API is available.
+  2. Synthetic VIX proxy generated locally from cached `SPY_ETF.parquet` when external fetch fails.
+- Synthetic proxy writes the same cache target:
+  - `~/.one_brain_fund/cache/bars/VX_VOLATILITY.parquet`
+
+Validation:
+- `./.venv/bin/python scripts/backfill_daily_bars.py --symbols VX --config config/sp500_universe.yaml`
+  - fallback used: `synthetic_vix_from_spy`
+  - wrote `5034` rows (`2006-04-06 -> 2026-04-01`)
+- `v8` now reports `vix=1` trade bucket and non-zero vix sleeve gross (`~0.05x`).
+
+Impact:
+- Technical block is resolved (sleeve runs), but this synthetic proxy reduced overall returns in current calibration.
+- Recommended policy:
+  - use real `VX` (IBKR/CFE) for production if possible,
+  - keep synthetic fallback for continuity/testing and gate vix sleeve size conservatively.
+
+### Synthetic Data Policy Update — Enforced
+
+Date: 2026-04-02
+
+User directive:
+- no synthetic data, only real verified data.
+
+Changes made:
+- removed synthetic VX generation fallback from `scripts/backfill_daily_bars.py`.
+- retained only real-provider pathways for `VX`:
+  - IBKR / Polygon / Alpaca (native paths)
+  - Alpha Vantage VIX proxy fallback (real external feed) when reachable
+- deleted synthetic cache artifacts:
+  - `~/.one_brain_fund/cache/bars/VX_VOLATILITY.parquet`
+  - `~/.one_brain_fund/cache/bars/VX_VOLATILITY.meta.json`
+
+Validation:
+- reran `./.venv/bin/python scripts/backfill_daily_bars.py --symbols VX --config config/sp500_universe.yaml`
+  - result: no write when real providers unavailable (`written=0`, `failed=1`)
+  - confirms synthetic fallback is no longer in effect.
+
+### v8 Hardening Pass (Kelly Lock + OOS Revalidation)
+
+Date: 2026-04-03
+
+Goal:
+- improve robustness without sacrificing alpha before live deployment.
+
+Code changes:
+- `backtest_v8.py`
+  - added optional global regime-risk scaler (`--enable-regime-risk-scaler`) with bounds/smoothing knobs:
+    - `--risk-floor`, `--risk-ceiling`, `--risk-smooth-days`
+  - added diagnostics to metrics:
+    - `option_active_days`
+    - `regime_risk_scaler_enabled`
+    - `regime_risk_scaler_diag`
+- `scripts/run_v8_walk_forward.py`
+  - params ingestion now supports:
+    - `target_vol`
+    - `enable_kelly_sentiment_overlay`
+    - `enable_regime_risk_scaler`
+    - `risk_floor`, `risk_ceiling`, `risk_smooth_days`
+- `scripts/run_v8_regime_splits.py`
+  - same param extensions as walk-forward runner.
+
+Production lock update:
+- `config/v8_production_locked.yaml` updated to Kelly-on lock:
+  - `enable_kelly_sentiment_overlay: 1`
+  - `enable_regime_risk_scaler: 0`
+  - retained constrained core params (`event=0.03`, `overlay_min_signal=0.08`, gross cap `1.80`, etc.).
+
+Full-history A/B (cache-complete, no-lookahead):
+- baseline lock:
+  - LP CAGR `+7.075%`, LP Sharpe `0.527`, LP Max DD `-25.20%`, Final NAV `$70.52M`
+- +Kelly (selected lock):
+  - LP CAGR `+7.066%`, LP Sharpe `0.530`, LP Max DD `-23.23%`, Final NAV `$70.41M`
+- regime-scaler variants were tested but not promoted:
+  - conservative scaler reduced CAGR/NAV
+  - aggressive scaler improved CAGR/NAV but worsened drawdown.
+
+Walk-forward revalidation (`14` folds):
+- command:
+  - `./.venv/bin/python scripts/run_v8_walk_forward.py --params-file config/v8_production_locked.yaml --output-csv data/reports/v8_walk_forward_locked_kelly.csv --min-train-years 5 --test-years 1 --step-years 1`
+- summary:
+  - mean LP CAGR: `0.06776` (vs `0.06769` prior lock)
+  - mean LP Sharpe: `0.40746` (vs `0.38464`)
+  - mean LP Max DD: `-0.12598` (vs `-0.12859`)
+  - pass count: `4/14` (unchanged)
+
+Regime-split revalidation (`5` splits):
+- command:
+  - `./.venv/bin/python scripts/run_v8_regime_splits.py --params-file config/v8_production_locked.yaml --output-csv data/reports/v8_regime_splits_kelly.csv --train-years 5 --recent-years 2 --warmup-days 180 --min-rows 360`
+- highlights vs prior lock:
+  - improved `2020+` and `recent` LP CAGR/Sharpe and shallower DD
+  - `2008` split slightly worse CAGR/DD (still within expected crisis stress behavior)
+  - all splits remain below the strict `15% / Sharpe 1.0` hurdle.
+
+Validation:
+- `./.venv/bin/python -m pytest tests/phase8/test_backtest_v8_helpers.py tests/phase4/test_event_alpha.py -q`
+- result: `11 passed`.
+
+### v8 Crash-Hedge Upgrade: Adaptive Put-Spread Overlay
+
+Date: 2026-04-03
+
+Objective:
+- improve crisis robustness (especially 2008-like tape) without giving up core alpha.
+
+Implemented:
+- `backtest_v8.py`
+  - upgraded synthetic option overlay to adaptive put-spread logic:
+    - long put leg always active when hedge is on
+    - short farther-OTM leg used in moderate stress to reduce carry bleed
+    - short-leg coverage auto-reduced in severe stress to restore convexity
+  - added stress-trigger knobs:
+    - `--option-short-strike-daily` (default `0.07`)
+    - `--option-short-credit-bps-daily` (default `0.9`)
+    - `--option-activation-score` (default `0.38`)
+    - `--option-severe-score` (default `0.78`)
+  - fixed overlay timing to avoid same-bar lookahead:
+    - roll decisions made at bar `t` apply to bar `t+1` returns
+  - extended diagnostics:
+    - `option_avg_short_coverage`
+    - enhanced option roll plan fields (`short_strike`, `short_coverage`, `PUT_SPREAD` tag)
+- runner plumbing:
+  - `scripts/run_v8_walk_forward.py` reads/passes new option params.
+  - `scripts/run_v8_regime_splits.py` reads/passes new option params.
+- lock update:
+  - `config/v8_production_locked.yaml` now explicitly includes new option params.
+
+Validation (full-history, same locked settings, cache-complete + no-lookahead):
+- baseline Kelly lock (before put-spread):
+  - Gross CAGR `10.955%`, Gross Sharpe `0.777`, Gross Max DD `-21.10%`
+  - LP CAGR `7.066%`, LP Sharpe `0.530`, LP Max DD `-23.23%`
+  - Final NAV `$70.41M`, LP NAV `$36.02M`
+- adaptive put-spread lock (after upgrade):
+  - Gross CAGR `11.034%`, Gross Sharpe `0.782`, Gross Max DD `-20.57%`
+  - LP CAGR `7.130%`, LP Sharpe `0.534`, LP Max DD `-22.71%`
+  - Final NAV `$71.36M`, LP NAV `$36.42M`
+- delta:
+  - LP CAGR `+0.063 pp`
+  - LP Sharpe `+0.004`
+  - LP Max DD improved by `0.52 pp`
+  - Final NAV `+$0.95M`
+
+Walk-forward revalidation (14 folds):
+- output: `data/reports/v8_walk_forward_locked_putspread.csv`
+- vs prior Kelly lock:
+  - mean LP CAGR `0.06776 -> 0.06787`
+  - mean LP Sharpe `0.40746 -> 0.40820`
+  - mean LP Max DD `-0.12598 -> -0.12594`
+  - pass count unchanged: `4/14`
+
+Regime split revalidation (5 splits):
+- output: `data/reports/v8_regime_splits_putspread.csv`
+- notable changes vs prior Kelly lock:
+  - `crisis_2008` improved materially:
+    - LP CAGR `-0.1747 -> -0.1686`
+    - LP Sharpe `-1.5613 -> -1.5049`
+    - LP Max DD `-0.1901 -> -0.1848`
+  - `2020+` and `recent` also improved slightly
+  - `2010s` mostly flat/slightly softer DD.
+
+Tests:
+- updated phase8 helper tests for new overlay API + short-leg coverage assertions.
+- `./.venv/bin/python -m pytest tests/phase8/test_backtest_v8_helpers.py tests/phase4/test_event_alpha.py -q`
+- result: `11 passed`.
+
+### Annual Hurdle Instrumentation + Strict 2010+ Check
+
+Date: 2026-04-03
+
+Objective update from PM:
+- optimize for annual **gross** hurdles:
+  - yearly gross return `>= 15%`
+  - yearly gross Sharpe `>= 1.0`
+- also minimize drawdown **time** (not only depth).
+
+Implementation:
+- `backtest_v8.py`
+  - added annual gross hurdle accounting:
+    - `years_ge_gross_return_target`
+    - `years_ge_gross_sharpe_target`
+    - `years_ge_gross_both_targets`
+  - retained LP hurdle accounting for parallel tracking.
+  - added drawdown-duration metrics:
+    - `max_underwater_days_gross`
+    - `max_underwater_days_lp`
+  - added CLI targets:
+    - `--gross-target-return` (default `0.15`)
+    - `--gross-target-sharpe` (default `1.0`)
+- `scripts/run_v8_constraint_sweep.py`
+  - scoring now rewards annual gross hurdle hit counts and penalizes LP underwater duration.
+  - strict constraint gate added:
+    - `--min-gross-both-ratio` (default `1.0` for “all years”)
+  - added optional date controls for focused regime sweeps:
+    - `--start-date`, `--eval-start`, `--eval-end`, `--warmup-days`, `--min-rows`
+
+Validation run (2010+ strict):
+- command:
+  - `./.venv/bin/python scripts/run_v8_constraint_sweep.py --max-runs 8 --start-date 2010-01-01 --eval-start 2010-01-01 --warmup-days 1 --min-rows 360 --min-gross-both-ratio 1.0 --output-csv data/reports/v8_constraint_sweep_2010_strict.csv`
+- result:
+  - `0/8` configs satisfied strict all-year gross-hurdle constraint.
+  - best observed `years_ge_gross_both_targets` in this grid: `6/17` years (`ratio 0.353`).
+
+Reference single-run (current lock, 2010+ full eval):
+- gross CAGR `11.35%`, gross Sharpe `0.83`, gross max DD `-17.02%`
+- annual gross hurdles:
+  - gross return `>=15%`: `6/17`
+  - gross Sharpe `>=1.0`: `8/17`
+  - both: `6/17`
+- max underwater days:
+  - gross `445`
+  - LP `547`
+
+### Full-History Annual Gross Hurdle Push (15% + Sharpe 1.0 Every Year)
+
+Date: 2026-04-03
+
+Objective:
+- treat this as primary hard target on full history:
+  - yearly gross return `>= 15%`
+  - yearly gross Sharpe `>= 1.0`
+  - all years (no averaging across decades)
+
+Implementation:
+- `backtest_v8.py`
+  - added per-year diagnostics payload in metrics json:
+    - `annual_summary` (year, gross/lp return, gross/lp Sharpe, and hit flags)
+  - added minimum annual stats:
+    - `min_gross_year_return`
+    - `min_gross_year_sharpe`
+    - `min_lp_year_return`
+    - `min_lp_year_sharpe`
+  - `total_years` now counts only valid evaluated years in the annual loop.
+- `scripts/run_v8_constraint_sweep.py`
+  - expanded search space to include yearly-consistency levers:
+    - `target_vol`
+    - option stress controls (`option_short_strike_daily`, `option_activation_score`, `option_severe_score`)
+    - Kelly and regime-risk toggles
+    - risk scaler bounds (`risk_floor`, `risk_ceiling`)
+    - governance drawdown thresholds (`gov_soft_dd`, `gov_hard_dd`)
+  - objective now penalizes worst-year gaps directly:
+    - penalty on `gross_target_return - min_gross_year_return`
+    - penalty on `gross_target_sharpe - min_gross_year_sharpe`
+  - added explicit CLI targets:
+    - `--gross-target-return`
+    - `--gross-target-sharpe`
+  - replaced full cartesian materialization with deterministic sampled candidate generation
+    (keeps runtime/memory stable after expanding search dimensions).
+
+Validation / runs:
+- probe sweep (expanded space):
+  - `./.venv/bin/python scripts/run_v8_constraint_sweep.py --max-runs 6 --min-gross-both-ratio 0.0 --output-csv data/reports/v8_constraint_sweep_yearly_probe.csv`
+  - best observed annual gross-both hit count: `6/20` years.
+- strict full-history sweep:
+  - `./.venv/bin/python scripts/run_v8_constraint_sweep.py --max-runs 4 --min-gross-both-ratio 1.0 --output-csv data/reports/v8_constraint_sweep_yearly_strict_full.csv`
+  - result: `0/4` feasible at all-year hard constraint.
+  - top row still only `6/20` years with both gross hurdles.
+- sampler smoke test:
+  - `./.venv/bin/python scripts/run_v8_constraint_sweep.py --max-runs 2 --min-gross-both-ratio 0.0 --output-csv /tmp/v8_sweep_smoke.csv`
+  - confirms deterministic low/high anchors execute correctly in the new sampled-candidate mode.
+- single-run deep diagnostic (best strict candidate):
+  - gross CAGR `10.23%`, gross Sharpe `0.756`, max DD `-18.96%`, final NAV `$62.23M`
+  - annual gross both: `6/20`
+  - worst annual gross return: `-12.33%`
+  - worst annual gross Sharpe: `-1.175`
+  - worst years by gross Sharpe: `2008`, `2022`, `2011`, `2018`.
+- current production lock diagnostic:
+  - gross CAGR `11.03%`, gross Sharpe `0.782`, max DD `-20.57%`, final NAV `$71.36M`
+  - annual gross both: `6/20`
+  - worst annual gross return: `-14.83%`
+  - worst annual gross Sharpe: `-1.311`
+
+Takeaway:
+- under current daily-bar, medium-frequency architecture, “every year >=15% gross and >=1.0 gross Sharpe” is not reachable in sampled realistic parameter space.
+- bottleneck is not just aggregate Sharpe; it is specific crisis/whipsaw years where annual Sharpe turns negative.
+
+Quick sanity test:
+- `./.venv/bin/python -m pytest tests/phase8/test_backtest_v8_helpers.py -q`
+- result: `5 passed`.
+
+### Macro Signal Reality Check + Walk-Forward Hardening (v7/v8)
+
+Date: 2026-04-03
+
+Objective:
+- test whether adding macro improves OOS performance.
+- tighten no-lookahead walk-forward enforcement beyond v8.
+
+What we found on macro data:
+- `data/events.db` currently has `0` rows with `event_type='macro'`.
+- Current event mix in `event_pit` is dominated by `earnings`, `news`, and `m&a`.
+- implication: “macro via event alpha” is currently inactive until dedicated macro event backfill is added.
+
+Macro proxy experiment (v8):
+- tested macro-style regime control by enabling `--enable-regime-risk-scaler` on top of production lock.
+- full-history compare (same cache-complete + no-lookahead guard):
+  - base lock:
+    - gross CAGR `11.03%`, gross Sharpe `0.782`, gross max DD `-20.57%`, final NAV `$71.36M`
+  - macro-proxy on:
+    - gross CAGR `10.62%`, gross Sharpe `0.762`, gross max DD `-21.29%`, final NAV `$66.50M`
+  - annual gross-both hits unchanged: `6/20`
+- walk-forward compare (14 folds, strict OOS windows):
+  - base (`data/reports/v8_walk_forward_locked_putspread.csv`)
+    - mean LP CAGR `0.06787`
+    - mean LP Sharpe `0.40820`
+    - median LP max DD `-0.12590`
+    - pass count `4/14`
+  - macro-proxy (`data/reports/v8_walk_forward_macroproxy.csv`)
+    - mean LP CAGR `0.06461`
+    - mean LP Sharpe `0.37987`
+    - median LP max DD `-0.12424`
+    - pass count `4/14`
+- verdict:
+  - macro-proxy reduced return/Sharpe and did not improve hurdle hit count.
+  - no evidence (yet) that macro improves this stack with current data.
+
+Walk-forward/no-lookahead hardening:
+- `backtest_v7.py` now supports strict OOS controls:
+  - `--start-date`, `--end-date`
+  - `--eval-start`, `--eval-end`
+  - `--warmup-days`, `--min-rows`
+  - `--enforce-no-lookahead`
+  - `--metrics-json`
+- added `scripts/run_v7_walk_forward.py`:
+  - cache-complete fold generation
+  - strict test windows (end-date + eval-start/eval-end)
+  - fold metrics + hurdle pass summary
+- smoke validation:
+  - `./.venv/bin/python backtest_v7.py --cache-complete-only --enforce-no-lookahead --start-date 2015-01-01 --end-date 2021-12-31 --eval-start 2020-01-01 --eval-end 2021-12-31 --warmup-days 120 --min-rows 120 --force-event-weight 0.03 --metrics-json /tmp/v7_smoke_metrics.json`
+  - produced metrics successfully with `lookahead_guard=true`.
+  - `gross Sharpe ~1.01`, `gross CAGR ~16.99%` on that bounded sample.
+  - `scripts/run_v7_walk_forward.py --max-folds 2` smoke run completed and wrote `/tmp/v7_wf_smoke.csv`.
+
+Repository audit helper:
+- added `scripts/audit_walk_forward_backtests.py` to print per-version support matrix for:
+  - walk-forward banner
+  - lagged execution (`shift(1)`)
+  - strict OOS CLI controls (`start/end`, `eval`, `enforce-no-lookahead`, `metrics-json`)
+- current matrix confirms strict window controls are now present in `v7` and `v8`; earlier versions still need explicit strict-window CLI standardization.
+
+### Lightweight Macro (Optional) + Multi-Strategy First
+
+Date: 2026-04-03
+
+Decision:
+- keep macro as an optional overlay inside v8, not a separate complex subsystem.
+- preserve multi-strategy architecture (core + ETF + futures + FX + options) as primary alpha engine.
+
+What was validated:
+- two-fold strict walk-forward A/B with identical settings except macro overlay toggle:
+  - off: `/tmp/v8_wf_off_2fold.csv`
+  - on: `/tmp/v8_wf_macro_2fold.csv`
+  - result: metrics were identical on this environment because macro cache was missing.
+- direct v8 run with `--enable-macro-overlay` confirmed safe no-op behavior:
+  - macro status prints `no_macro_cache`
+  - scaler stats stayed `avg=1.000 min=1.000 max=1.000`
+  - run completed normally and preserved lookahead guard.
+
+Current macro data status:
+- `~/.one_brain_fund/cache/macro` is not present yet.
+- `FRED_API_KEY` is not set in current shell session.
+- implication: macro overlay is production-safe but inactive until free FRED cache is backfilled.
+
+Why this is useful:
+- we can continue improving multi-strategy sleeves without adding fragility.
+- when macro cache is ready, overlay can be activated with one flag/config toggle and immediately measured in walk-forward.
+
+### Macro Backtest Run (with real FRED cache) + Alignment Fix
+
+Date: 2026-04-03
+
+What was done:
+- populated free macro cache from FRED after adding `FRED_API_KEY`:
+  - command: `./.venv/bin/python scripts/backfill_macro_fred.py --refresh-cache --start-date 1990-01-01 --end-date 2026-04-03`
+  - result: `6` series written, merged panel at `~/.one_brain_fund/cache/macro/fred_daily.parquet` (`13241` rows, `6` cols).
+
+Issue found and fixed:
+- macro overlay initially showed no impact despite cache present.
+- root cause: timezone/intraday index mismatch in `load_macro_panel(...)` produced all-NaN macro features after reindex.
+- fix:
+  - normalize both macro index and target index to calendar dates.
+  - drop timezone before alignment.
+  - align using normalized dates, then restore caller index shape.
+  - collapse duplicate normalized dates with `groupby(level=0).last()`.
+- regression test added:
+  - `tests/phase8/test_backtest_v8_helpers.py::test_macro_panel_aligns_on_calendar_dates_for_tz_aware_index`
+  - phase-8 helpers now `8 passed`.
+
+Backtest compare (full-history, cache-complete, no-lookahead):
+- baseline (macro off): `/tmp/v8_macro_off_full.json`
+- macro on (fixed): `/tmp/v8_macro_on_full_fix.json`
+
+Observed deltas (macro on minus off):
+- gross CAGR: `-0.06 pts` (11.03% -> 10.97%)
+- gross Sharpe: `+0.0003` (effectively flat)
+- gross max DD: improved by `+0.15 pts` (less negative)
+- final NAV: `- $0.73M`
+- LP net CAGR: `-0.05 pts`
+- LP net Sharpe: `-0.0005` (flat)
+- LP net max DD: improved by `+0.15 pts`
+- LP annual hurdles:
+  - years with net Sharpe >= 1.0: `5 -> 6`
+  - years hitting both net hurdles: `4 -> 5`
+
+Macro overlay diagnostics (fixed run):
+- status: `ok`
+- components used: `3`
+- scale avg/min/max: `0.983 / 0.913 / 1.000`
+- avg macro score: `-0.009`
+
+Interpretation:
+- lightweight macro de-risking is now active and real.
+- it slightly improves downside profile / LP hurdle consistency, but trims total return and terminal NAV in this calibration.
+
+### v10 Priority Stack Implemented (Router -> Convexity -> Whipsaw -> Yearly Budget -> Worst-Year Objective)
+
+Date: 2026-04-03
+
+Implemented in order of priority:
+- `backtest_v8.py`
+  - added Regime Router 2.0 (`risk_on/risk_off/crash`) with lagged inputs only (`shift(1)` style usage).
+  - upgraded crash convexity overlay to keep hedge always defined and scale by crash probability.
+  - added whipsaw control layer (entry persistence + exit hysteresis).
+  - added yearly risk budget controller (monthly-adjusted scaler from realized YTD vol/DD, lagged).
+  - exposed new CLI flags for all v10 controls.
+- sweep objective updated to worst-year-first:
+  - `scripts/run_v8_constraint_sweep.py` now optimizes primary constraints first
+    (min annual return/sharpe gaps + both-hurdle gap), then secondary quality terms.
+- walk-forward/regime runners updated to accept/pass v10 controls:
+  - `scripts/run_v8_walk_forward.py`
+  - `scripts/run_v8_regime_splits.py`
+- locked config added:
+  - `config/v10_production_locked.yaml`
+- tests expanded:
+  - `tests/phase8/test_backtest_v8_helpers.py` includes v10 helper coverage.
+
+Validation runs:
+- phase-8 helper tests:
+  - `./.venv/bin/python -m pytest tests/phase8/test_backtest_v8_helpers.py -q`
+  - result: `11 passed`
+- strict no-lookahead v10 smoke:
+  - sample: `2020-01-02 -> 2021-12-31` (cache-complete mode, `396` tradable instruments)
+  - gross: CAGR `18.04%`, Sharpe `1.07`, max DD `-13.26%`, final NAV `$14.02M`
+  - LP net: CAGR `12.49%`, Sharpe `0.78`, max DD `-13.42%`, LP NAV `$12.74M`
+  - annual gross hurdles (sample): both `1/2`
+  - diagnostics:
+    - router: `risk_on=1608, risk_off=108, crash=89, avg_crash_prob=0.101`
+    - whipsaw turnover reduction: `0.00236`
+    - yearly risk budget scale avg/min/max: `1.004 / 0.838 / 1.054`
+- one-fold walk-forward smoke (`/tmp/v10_wf_smoke.csv`):
+  - fold test `2011-04-06..2012-04-05`
+  - LP net CAGR `-10.08%`, LP net Sharpe `-0.69`, LP max DD `-20.85%`, pass `False`
+- regime split smoke (`/tmp/v10_regime_smoke.csv`):
+  - all splits executed successfully (`5/5` status `ok`)
+  - LP results still below strict 15%/1.0 gates in all current splits.
+- worst-year-first constrained sweep smoke (`/tmp/v10_constraint_smoke.csv`):
+  - ran `6` candidates on bounded strict window (`2020-2021` eval).
+  - all candidates remained `constraint_ok=False`.
+  - top candidate snapshot: LP net CAGR `11.08%`, LP net Sharpe `0.71`, LP max DD `-12.45%`,
+    min gross year return `9.82%`, min gross year Sharpe `0.75`.
+  - confirms objective plumbing is active and ranking by worst-year gaps, but gates are still not met.
+
+### v10 Alpha-Recovery Calibration (full-history, strict no-lookahead)
+
+Date: 2026-04-03
+
+Prompted by NAV drop concern (`~$70M` -> `~$65M`), ran full-history layer ablation to identify v10 drag sources.
+
+Artifacts:
+- `data/reports/v10_tuning_ablation_2026-04-03.json`
+- `data/reports/v10_layer_ablation_2026-04-03.json`
+
+Key full-history results (all from same base settings, cache-complete, no-lookahead):
+- `v10_full_current` (router + whipsaw + yearly + always-on min hedge):
+  - gross CAGR `10.21%`, gross Sharpe `0.720`, gross max DD `-21.69%`, final NAV `$65.14M`
+- `v8_like_no_v10_layers`:
+  - gross CAGR `10.78%`, gross Sharpe `0.773`, gross max DD `-20.57%`, final NAV `$71.86M`
+- `v10_router_only` (best tradeoff):
+  - gross CAGR `10.94%`, gross Sharpe `0.757`, gross max DD `-20.45%`, final NAV `$73.93M`
+
+Attribution takeaway:
+- Router layer adds return and improves DD control.
+- Whipsaw + yearly budget stack introduces most of the alpha drag in this calibration.
+- Always-on minimum hedge notional (`0.004`) did not help enough to justify carry drag.
+
+Action taken:
+- Updated `config/v10_production_locked.yaml` to router-only alpha-recovery lock:
+  - `option_always_on_min_notional: 0.0`
+  - `enable_regime_router_v10: 1`
+  - `enable_whipsaw_control_v10: 0`
+  - `enable_yearly_risk_budget_v10: 0`
+
+Quick OOS smoke on new lock:
+- `scripts/run_v8_walk_forward.py --params-file config/v10_production_locked.yaml --max-folds 3`
+- output: `data/reports/v10_router_only_wf3_2026-04-03.csv`
+- summary:
+  - folds ok: `3`
+  - mean LP net CAGR: `10.30%`
+  - mean LP net Sharpe: `0.53`
+  - median LP max DD: `-9.95%`
+  - pass count: `1/3`
+
+Takeaway:
+- v10 plumbing is in place with strict walk-forward/no-lookahead support.
+- short-sample risk-adjusted behavior improved, but full OOS gate consistency is not yet achieved;
+  next step is targeted calibration on weak regimes (not architecture gaps).
+
+### Live Toggle Policy (Pre-committed ON/OFF rules)
+
+Date: 2026-04-03
+
+Purpose:
+- avoid discretionary toggle changes in live trading.
+- only keep layers ON when they win in OOS and live shadow stats after costs.
+
+Current champion lock:
+- `enable_regime_router_v10: 1`
+- `enable_whipsaw_control_v10: 0`
+- `enable_yearly_risk_budget_v10: 0`
+- `option_always_on_min_notional: 0.0`
+
+Promotion rule (OFF -> ON):
+- challenger must beat champion in walk-forward + regime-split aggregate with no-lookahead,
+  and improve either annual hurdle hit-rate or downside metrics without degrading CAGR/NAV beyond tolerance.
+- require two consecutive evaluation cycles before promotion.
+
+Demotion rule (ON -> OFF):
+- if live shadow underperforms expected distribution for 2-3 monthly reviews and worsens
+  drawdown/sharpe diagnostics versus champion bounds, demote to OFF at next scheduled release window.
+
+Execution discipline:
+- config changes only on scheduled cadence (monthly/quarterly) unless hard risk controls fire.
+- every toggle change must include artifact links and before/after metrics in DEVLOG + reports.

@@ -4,22 +4,41 @@ A Renaissance-style systematic trading engine that ranks stocks cross-sectionall
 
 ## Backtest Results vs SPY (2007-2026, $10M starting NAV)
 
-| Metric | v2 | v3 | v4 | SPY (Buy & Hold) |
-|--------|------|------|------|-------------------|
-| **CAGR** | +4.01% | **+8.39%** | +9.76% | +7.10% |
-| **Sharpe** | 0.41 | **0.57** | 0.56 | 0.46 |
-| **Sortino** | 0.47 | **0.69** | 0.66 | 0.54 |
-| **Max Drawdown** | -34.2% | **-32.0%** | -37.4% | -56.5% |
-| **Final NAV** | $22.1M | **$55.2M** | $70.9M | $43.0M |
-| **Win Years** | 12/20 | 15/20 | **15/20** | 16/20 |
-| **Loss Years** | 8/20 | **5/20** | 5/20 | 4/20 |
-| **Beat SPY Return** | 6/20 | 10/20 | **13/20** | — |
-| **Beat SPY Sharpe** | 4/20 | 9/20 | **7/20** | — |
-| **Turnover** | 11x/yr | **22x/yr** | 28x/yr | 0 |
-| **Tx Costs** | 33 bps | **66 bps** | 83 bps | 0 |
+### Canonical Version Comparison (v1-v10)
 
-**v3** is the best risk-adjusted engine (highest Sharpe, lowest max DD, lowest costs).
-**v4** produces the highest absolute returns ($70.9M vs SPY $43.0M) at higher volatility.
+Canonical source of truth: `data/reports/version_comparison_v1_v10.csv`
+
+| Version | CAGR | Sharpe | Max DD | Final NAV ($M) | Turnover (x/yr) | Tx Costs (bps/yr) | Source |
+|---|---:|---:|---:|---:|---:|---:|---|
+| v1 | +2.00% | 0.20 | -40.00% | n/a | n/a | n/a | readme_baseline |
+| v2 | +4.01% | 0.41 | -34.20% | $22.10M | 11x | 33 | readme_baseline |
+| v3 | +8.39% | 0.57 | -32.00% | $55.20M | 22x | 66 | readme_baseline |
+| v4 | +10.97% | 0.71 | -29.79% | $70.63M | 21x | 62 | current_run |
+| v5 | +10.73% | 0.67 | -33.96% | $85.60M | 21x | 62 | devlog_calibrated |
+| v6 | +4.61% | 0.66 | -15.75% | $25.80M | 7x | 21 | devlog_calibrated |
+| v7 | +11.09% | 0.72 | -29.45% | $72.05M | 21x | 62 | current_run |
+| v8 | +11.03% | 0.78 | -20.57% | $71.36M | 17x | 48 | current_run |
+| v9 | +10.97% | 0.78 | -20.42% | $70.64M | 17x | 48 | current_run |
+| v10 | +10.94% | 0.76 | -20.45% | $73.93M | 18x | 52 | current_run |
+
+Notes:
+- `v1` is approximate historical baseline (`~2% CAGR`, `~0.2 Sharpe`, `-40%+ DD`).
+- `v2-v6` are from stable published/calibrated records.
+- `v7-v10` are current calibrated runs.
+- Consistency check: `./.venv/bin/python scripts/check_version_comparison_table.py`
+
+### Version Notes (v1-v10)
+
+- `v1`: baseline single-factor engine with simple environment scoring, high turnover, and weak crash control.
+- `v2`: introduced risk budgets by asset class, lower turnover, and smoother execution; improved survivability at the cost of slower growth.
+- `v3`: moved to cross-sectional multi-factor ranking (6 factors, residual momentum lead), added adaptive factor weighting and stronger drawdown controls.
+- `v4`: promoted multi-strategy stacking as core engine (8 sleeves, risk-parity blend, volatility targeting, crisis overlays); became the main production-style baseline.
+- `v5`: added central allocator/capacity logic to re-route risk across sleeves based on live-quality/performance diagnostics.
+- `v6`: conservative deployment branch; tightened risk and governance for lower drawdown/time-under-water, sacrificing upside.
+- `v7`: added event-driven PIT alpha (SEC fundamentals, estimates/revisions, sentiment quality gating) on top of the v4-style core.
+- `v8`: expanded to multi-asset sleeves (ETF, futures, FX) plus options hedge path, execution realism, and strict walk-forward/no-lookahead validation tooling.
+- `v9`: `v8` plus lightweight free-data macro overlay (FRED curve/unemployment/rates) as an optional risk-scaling de-risk layer.
+- `v10`: implemented the consistency stack (router/convexity/whipsaw/yearly budget), then locked to router-only for alpha recovery after ablation; removed always-on hedge floor and kept strict no-lookahead walk-forward validation.
 
 ### v4 Year-by-Year vs SPY
 
@@ -212,11 +231,41 @@ cp .env.example .env
 ./.venv/bin/python scripts/backfill_alpha_vantage_pit.py --cache-only --requests-per-minute 20
 ```
 
+### Optional: FinBERT Sentiment Enrichment (Hugging Face)
+
+```bash
+# One-time NLP deps for FinBERT scoring
+./.venv/bin/pip install -e ".[nlp]"
+
+# Enrich existing PIT events with FINBERT_ENRICHED records (cached on disk)
+./.venv/bin/python scripts/backfill_finbert_pit.py --since 2016-01-01T00:00:00Z
+
+# Offline-only rerun (uses local cache, no model/API calls)
+./.venv/bin/python scripts/backfill_finbert_pit.py --cache-only
+
+# Fill missing VX cache for vix sleeve (real providers only)
+./.venv/bin/python scripts/backfill_daily_bars.py --symbols VX --config config/sp500_universe.yaml
+```
+
 Raw payload cache location:
 - `data/cache/pit/alpha_vantage/{json,news,csv}`
 - Backtests read event/fundamental PIT data from local SQLite files:
   - `data/events.db`
   - `data/fundamentals.db`
+
+### Optional: Lightweight Macro Cache (Free FRED API)
+
+```bash
+# Backfill a small macro panel and persist locally (daily forward-filled parquet)
+./.venv/bin/python scripts/backfill_macro_fred.py --start-date 1990-01-01
+
+# Offline-only run (uses raw cache + existing parquet only)
+./.venv/bin/python scripts/backfill_macro_fred.py --cache-only
+```
+
+Macro cache output:
+- per-series: `~/.one_brain_fund/cache/macro/<SERIES>.parquet`
+- merged panel: `~/.one_brain_fund/cache/macro/fred_daily.parquet`
 
 ### Running Backtests
 
@@ -231,6 +280,32 @@ python3 backtest_v4.py --target-gross 1.5 --n-long 35 --n-short 12 \
 
 # Use --no-cache to force fresh data download from providers
 python3 backtest_v4.py --no-cache
+
+# v7 — Equity core + PIT event/sentiment alpha (current calibrated baseline)
+./.venv/bin/python backtest_v7.py --force-event-weight 0.05
+
+# v8 — v7 core + ETF/Futures/FX sleeves + VIX + options-hedge execution path
+# (options layer is a conservative synthetic put-overlay in backtest mode)
+./.venv/bin/python backtest_v8.py --force-event-weight 0.05
+
+# v8 strict no-lookahead run on cache-complete universe only
+./.venv/bin/python backtest_v8.py --force-event-weight 0.05 --cache-complete-only --enforce-no-lookahead
+
+# v8 + optional lightweight macro overlay (risk scaling only; multi-strategy remains primary)
+./.venv/bin/python backtest_v8.py --force-event-weight 0.05 --enable-macro-overlay
+
+# v8 constrained sweep (Path #2): optimize for LP returns under DD/turnover caps
+./.venv/bin/python scripts/run_v8_constraint_sweep.py --max-runs 24
+
+# v8 walk-forward (strict out-of-sample, no lookahead)
+./.venv/bin/python scripts/run_v8_walk_forward.py --min-train-years 5 --test-years 1 --step-years 1
+
+# v8 walk-forward using locked production config
+./.venv/bin/python scripts/run_v8_walk_forward.py --params-file config/v8_production_locked.yaml \
+  --output-csv data/reports/v8_walk_forward_locked.csv
+
+# v8 regime split validation (pre-2008, 2008, 2010s, 2020+, recent)
+./.venv/bin/python scripts/run_v8_regime_splits.py --train-years 5
 ```
 
 ## Design Principles
