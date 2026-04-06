@@ -76,7 +76,7 @@ def load_universe_dynamic(config_path, skip_mcap=False):
     return universe
 
 
-CACHE_DIR = os.path.expanduser("~/.one_brain_fund/cache/bars")
+CACHE_DIR = os.path.expanduser("~/.alphaforge/cache/bars")
 
 
 def fetch_daily_bars(dm: DataManager, symbol: str, asset_type: str, use_cache: bool = True) -> pd.DataFrame:

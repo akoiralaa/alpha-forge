@@ -174,7 +174,7 @@ def run() -> int:
     p.add_argument("--python", default=sys.executable)
     p.add_argument("--backtest-script", default="backtest_v8.py")
     p.add_argument("--config", default="config/sp500_universe.yaml")
-    p.add_argument("--cache-dir", default="~/.one_brain_fund/cache/bars")
+    p.add_argument("--cache-dir", default="~/.alphaforge/cache/bars")
     p.add_argument("--params-file", default="config/v8_production_locked.yaml")
     p.add_argument("--output-csv", default="data/reports/v8_regime_splits.csv")
     p.add_argument("--train-years", type=int, default=5)

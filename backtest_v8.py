@@ -35,7 +35,7 @@ from src.signals.event_alpha import EventAlphaConfig, build_event_alpha_signal
 
 # ── Black-Scholes options pricing with real VIX ─────────────────────────────
 
-_VIX_CACHE_PATH = os.path.expanduser("~/.one_brain_fund/cache/macro/VIXCLS.parquet")
+_VIX_CACHE_PATH = os.path.expanduser("~/.alphaforge/cache/macro/VIXCLS.parquet")
 _VIX_FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
 
 
@@ -521,7 +521,7 @@ def build_bs_option_overlay(
     # ── Risk-free rate from FEDFUNDS cache ──
     rf = pd.Series(0.04, index=idx)
     try:
-        ff_path = os.path.expanduser("~/.one_brain_fund/cache/macro/FEDFUNDS.parquet")
+        ff_path = os.path.expanduser("~/.alphaforge/cache/macro/FEDFUNDS.parquet")
         if os.path.exists(ff_path):
             ff = pd.read_parquet(ff_path)
             ff.index = pd.to_datetime(ff.index)
@@ -2392,14 +2392,14 @@ if __name__ == "__main__":
     p.add_argument("--risk-ceiling", type=float, default=1.12)
     p.add_argument("--risk-smooth-days", type=int, default=7)
     p.add_argument("--enable-regime-router-v10", action="store_true")
-    p.add_argument("--router-macro-cache-file", default="~/.one_brain_fund/cache/macro/fred_daily.parquet")
+    p.add_argument("--router-macro-cache-file", default="~/.alphaforge/cache/macro/fred_daily.parquet")
     p.add_argument("--router-vol-window", type=int, default=21)
     p.add_argument("--router-trend-window", type=int, default=200)
     p.add_argument("--router-crash-threshold", type=float, default=0.62)
     p.add_argument("--router-risk-off-threshold", type=float, default=0.50)
     p.add_argument("--router-smooth-days", type=int, default=3)
     p.add_argument("--enable-macro-overlay", action="store_true")
-    p.add_argument("--macro-cache-file", default="~/.one_brain_fund/cache/macro/fred_daily.parquet")
+    p.add_argument("--macro-cache-file", default="~/.alphaforge/cache/macro/fred_daily.parquet")
     p.add_argument("--macro-max-de-risk", type=float, default=0.12)
     p.add_argument("--macro-min-scale", type=float, default=0.85)
     p.add_argument("--macro-smooth-days", type=int, default=5)

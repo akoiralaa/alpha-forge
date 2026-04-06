@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DEFAULT_CACHE_DIR = Path("~/.one_brain_fund/cache").expanduser()
+DEFAULT_CACHE_DIR = Path("~/.alphaforge/cache").expanduser()
 DEFAULT_CACHE_FILE = "universe_cache.json"
 DEFAULT_STALENESS_HOURS = 24
 

@@ -2,9 +2,9 @@
 # Every parameter change is a git commit with a message explaining why.
 
 storage:
-  arcticdb_path: "~/one_brain_fund/data/arcticdb"
-  symbol_master_path: "~/one_brain_fund/data/symbol_master.db"
-  fundamentals_path: "~/one_brain_fund/data/fundamentals.db"
+  arcticdb_path: "~/alphaforge/data/arcticdb"
+  symbol_master_path: "~/alphaforge/data/symbol_master.db"
+  fundamentals_path: "~/alphaforge/data/fundamentals.db"
 
 quality_pipeline:
   price_deviation_pct: 0.10          # 10% from rolling mean = fat finger

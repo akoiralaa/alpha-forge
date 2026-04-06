@@ -105,7 +105,7 @@ Single-factor signal engine with environment scoring. Basic vol-targeting and Ke
 - Per-asset-class risk budgets (equities 50%, futures 12%, commodities 10%, bonds 8%, FX 10%)
 - Position concentration (top N by signal strength)
 - Turnover dampening via weight blending
-- Parquet data caching to `~/.one_brain_fund/cache/bars/`
+- Parquet data caching to `~/.alphaforge/cache/bars/`
 - Monthly attribution and per-trade logging
 
 ### v3 — Cross-Sectional Alpha Engine (`backtest_v3.py`)
@@ -224,7 +224,7 @@ Full control stack enabled. Currently trails v8.2 — see postmortem above. Not 
 Historical equities/ETFs:  Polygon → Alpaca → IBKR (fallback chain)
 Historical futures/FX:     IBKR → Polygon
 Live streaming:            IBKR only
-All data cached as Parquet: ~/.one_brain_fund/cache/bars/
+All data cached as Parquet: ~/.alphaforge/cache/bars/
 ```
 
 ## Setup
@@ -303,8 +303,8 @@ Raw payload cache location:
 ```
 
 Macro cache output:
-- per-series: `~/.one_brain_fund/cache/macro/<SERIES>.parquet`
-- merged panel: `~/.one_brain_fund/cache/macro/fred_daily.parquet`
+- per-series: `~/.alphaforge/cache/macro/<SERIES>.parquet`
+- merged panel: `~/.alphaforge/cache/macro/fred_daily.parquet`
 
 ### Running Backtests
 

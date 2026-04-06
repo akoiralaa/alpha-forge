@@ -141,7 +141,7 @@ def run() -> int:
     p.add_argument("--python", default=sys.executable)
     p.add_argument("--backtest-script", default="backtest_v7.py")
     p.add_argument("--config", default="config/sp500_universe.yaml")
-    p.add_argument("--cache-dir", default="~/.one_brain_fund/cache/bars")
+    p.add_argument("--cache-dir", default="~/.alphaforge/cache/bars")
     p.add_argument("--params-file", default="")
     p.add_argument("--output-csv", default="data/reports/v7_walk_forward.csv")
     p.add_argument("--min-train-years", type=int, default=5)

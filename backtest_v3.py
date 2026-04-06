@@ -43,7 +43,7 @@ from src.regime.tracker import RegimeTracker
 
 
 ASSET_TYPES = {}
-CACHE_DIR = os.path.expanduser("~/.one_brain_fund/cache/bars")
+CACHE_DIR = os.path.expanduser("~/.alphaforge/cache/bars")
 
 _ASSET_CLASS_MAP = {
     "ETF": AssetClass.ETF, "EQUITY": AssetClass.EQUITY,

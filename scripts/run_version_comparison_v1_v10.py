@@ -15,7 +15,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CACHE_DIR = Path(os.path.expanduser("~/.one_brain_fund/cache/bars"))
+CACHE_DIR = Path(os.path.expanduser("~/.alphaforge/cache/bars"))
 CSV_OUT = REPO_ROOT / "data" / "reports" / "version_comparison_v1_v10.csv"
 LOG_DIR = REPO_ROOT / "data" / "reports" / "run_logs"
 

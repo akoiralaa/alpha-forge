@@ -229,7 +229,7 @@ def run() -> int:
         help="Minimum ratio of years meeting gross return+Sharpe hurdles.",
     )
     p.add_argument("--output-csv", default="data/reports/v8_constraint_sweep.csv")
-    p.add_argument("--cache-dir", default="~/.one_brain_fund/cache/bars")
+    p.add_argument("--cache-dir", default="~/.alphaforge/cache/bars")
     p.add_argument("--allow-missing-cache", action="store_true")
     p.add_argument("--gross-target-return", type=float, default=0.15)
     p.add_argument("--gross-target-sharpe", type=float, default=1.0)

@@ -68,7 +68,7 @@ def main():
 
     user_agent = os.getenv(
         "SEC_USER_AGENT",
-        "one_brain_fund/0.1 (research; contact: research@onebrainfund.local)",
+        "alphaforge/0.1 (research)",
     )
     logging.info("Backfilling SEC company facts for %d tickers", len(tickers))
     backfiller = SecCompanyFactsBackfiller(

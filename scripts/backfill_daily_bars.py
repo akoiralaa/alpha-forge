@@ -25,7 +25,7 @@ from src.data.ingest.daily_bar_cache import (
 from src.data.ingest.data_manager import build_data_manager_from_env
 
 
-DEFAULT_CACHE_DIR = Path("~/.one_brain_fund/cache/bars").expanduser()
+DEFAULT_CACHE_DIR = Path("~/.alphaforge/cache/bars").expanduser()
 
 
 def parse_args():

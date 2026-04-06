@@ -396,7 +396,7 @@ def main():
     parser = argparse.ArgumentParser(description="Phase 1 Validation Gate")
     parser.add_argument(
         "--data-dir",
-        default="~/one_brain_fund/data",
+        default="~/alphaforge/data",
         help="Path to data directory",
     )
     args = parser.parse_args()
