@@ -1,0 +1,30 @@
+version: "v8"
+locked_on: "2026-04-03"
+source: "lightweight macro overlay on top of production lock"
+policy:
+  cache_complete_only: true
+  enforce_no_lookahead: true
+params:
+  force_event_weight: 0.03
+  overlay_min_signal: 0.08
+  target_vol: 0.15
+  etf_gross: 0.20
+  futures_gross: 0.20
+  fx_gross: 0.08
+  option_max_notional: 0.04
+  option_short_strike_daily: 0.07
+  option_short_credit_bps_daily: 0.9
+  option_activation_score: 0.38
+  option_severe_score: 0.78
+  total_gross_cap: 1.80
+  gov_min_mult: 0.30
+  exec_liq_cost_mult: 0.80
+  enable_kelly_sentiment_overlay: 1
+  enable_regime_risk_scaler: 0
+  enable_macro_overlay: 1
+  macro_max_de_risk: 0.12
+  macro_min_scale: 0.85
+  macro_smooth_days: 5
+  risk_floor: 0.80
+  risk_ceiling: 1.12
+  risk_smooth_days: 7

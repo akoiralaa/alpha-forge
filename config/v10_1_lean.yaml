@@ -1,0 +1,91 @@
+version: "v10.1"
+locked_on: "2026-04-03"
+source: "lean router-led recovery profile (reduced control-layer drag)"
+policy:
+  cache_complete_only: true
+  enforce_no_lookahead: true
+  notes:
+    - keep regime router on as primary consistency control
+    - disable heavy control layers unless they prove additive in walk-forward
+    - keep intraday sleeve requested only when local intraday cache is actually populated
+params:
+  force_event_weight: 0.03
+  overlay_min_signal: 0.08
+  target_vol: 0.15
+  etf_gross: 0.20
+  futures_gross: 0.20
+  fx_gross: 0.08
+  option_max_notional: 0.04
+  option_always_on_min_notional: 0.0
+  option_short_strike_daily: 0.07
+  option_short_credit_bps_daily: 0.9
+  option_activation_score: 0.38
+  option_severe_score: 0.78
+  option_calm_short_coverage: 0.95
+  option_crash_short_coverage_floor: 0.15
+  option_crash_prob_sensitivity: 0.45
+  total_gross_cap: 1.80
+  gov_min_mult: 0.30
+  gov_expected_sharpe_intraday: 0.40
+  exec_liq_cost_mult: 0.80
+  event_min_source_quality: 0.75
+  enable_kelly_sentiment_overlay: 1
+  enable_weak_sleeve_hard_demote: 1
+  weak_demote_sharpe: -0.18
+  weak_recover_sharpe: 0.10
+  weak_demote_confirm_days: 42
+  weak_recover_confirm_days: 84
+  weak_demote_mult: 0.35
+  enable_regime_risk_scaler: 0
+  risk_floor: 0.80
+  risk_ceiling: 1.12
+  risk_smooth_days: 7
+  enable_regime_router_v10: 1
+  router_vol_window: 21
+  router_trend_window: 200
+  router_crash_threshold: 0.62
+  router_risk_off_threshold: 0.50
+  router_smooth_days: 3
+  enable_whipsaw_control_v10: 0
+  whipsaw_entry_days: 2
+  whipsaw_exit_days: 3
+  whipsaw_entry_abs: 0.0035
+  whipsaw_exit_abs: 0.0020
+  enable_yearly_risk_budget_v10: 0
+  yearly_vol_budget: 0.19
+  yearly_dd_budget: 0.20
+  yearly_budget_min_scale: 0.78
+  yearly_budget_max_scale: 1.08
+  yearly_budget_smooth_days: 5
+  enable_adaptive_v10_layers: 0
+  adaptive_v10_crash_prob_trigger: 0.45
+  adaptive_v10_soft_gate: 1
+  enable_state_param_bank_v10: 1
+  state_risk_on_mult: 1.02
+  state_risk_off_mult: 0.99
+  state_crash_mult: 0.90
+  state_hedge_risk_on_mult: 0.98
+  state_hedge_risk_off_mult: 1.03
+  state_hedge_crash_mult: 1.15
+  state_gross_risk_on_mult: 1.02
+  state_gross_risk_off_mult: 0.98
+  state_gross_crash_mult: 0.88
+  state_option_risk_on_mult: 0.98
+  state_option_risk_off_mult: 1.03
+  state_option_crash_mult: 1.12
+  enable_intraday_cache_sleeve: 1
+  intraday_gross: 0.05
+  intraday_max_pos: 0.03
+  intraday_min_signal: 0.08
+  intraday_rebal_freq: 5
+  intraday_allow_shorts: 1
+  enable_macro_overlay: 0
+  macro_max_de_risk: 0.12
+  macro_min_scale: 0.85
+  macro_smooth_days: 5
+targets:
+  gross_target_return: 0.15
+  gross_target_sharpe: 1.0
+  lp_target_return: 0.09
+  lp_target_sharpe: 0.65
+  lp_max_dd: 0.25

@@ -1,0 +1,47 @@
+version: "v8_new_architecture"
+locked_on: "2026-04-03"
+source: "worst-year-first + LP-vs-SPY constrained architecture"
+policy:
+  cache_complete_only: true
+  enforce_no_lookahead: true
+  objective_priority:
+    - protect_worst_years
+    - beat_spy_after_fees
+    - grow_cagr
+params:
+  force_event_weight: 0.03
+  overlay_min_signal: 0.08
+  target_vol: 0.15
+  etf_gross: 0.20
+  futures_gross: 0.20
+  fx_gross: 0.08
+  option_max_notional: 0.04
+  option_always_on_min_notional: 0.0
+  option_short_strike_daily: 0.07
+  option_short_credit_bps_daily: 0.9
+  option_activation_score: 0.38
+  option_severe_score: 0.78
+  total_gross_cap: 1.80
+  gov_min_mult: 0.30
+  exec_liq_cost_mult: 0.80
+  enable_kelly_sentiment_overlay: 1
+  enable_regime_router_v10: 1
+  enable_whipsaw_control_v10: 1
+  enable_yearly_risk_budget_v10: 1
+  yearly_vol_budget: 0.19
+  yearly_dd_budget: 0.20
+  yearly_budget_min_scale: 0.78
+  yearly_budget_max_scale: 1.08
+  yearly_budget_smooth_days: 5
+  enable_regime_risk_scaler: 0
+  risk_floor: 0.80
+  risk_ceiling: 1.12
+  risk_smooth_days: 7
+targets:
+  gross_target_return: 0.15
+  gross_target_sharpe: 1.0
+  lp_target_return: 0.09
+  lp_target_sharpe: 0.65
+  lp_max_dd: 0.25
+  lp_vs_spy_cagr_alpha_min: 0.00
+  lp_vs_spy_years_beat_ratio_min: 0.55
