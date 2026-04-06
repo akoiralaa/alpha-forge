@@ -2330,7 +2330,12 @@ def run(args):
             json.dump(metrics, f, indent=2)
     if args.output_returns:
         os.makedirs(os.path.dirname(os.path.abspath(args.output_returns)), exist_ok=True)
-        ret_df = pd.DataFrame({"gross_ret": net_ret.values, "lp_ret": lp_ret.values}, index=net_ret.index)
+        spy_ret_out = spy_ret_eval.reindex(net_ret.index).fillna(0.0)
+        ret_df = pd.DataFrame({
+            "gross_ret": net_ret.values,
+            "lp_ret": lp_ret.values,
+            "spy_ret": spy_ret_out.values,
+        }, index=net_ret.index)
         ret_df.index.name = "date"
         ret_df.to_csv(args.output_returns)
     return metrics

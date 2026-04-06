@@ -96,6 +96,46 @@ Why `v10` underperformed:
 
 > Note: these simulate the default parameter configuration. The production-tuned v8.2 (0.77 Sharpe, -20.45% max DD) requires the locked parameter set in `config/v8_production_locked.yaml`. Full results stored in `data/reports/monte_carlo_v8_1yr.json` and `data/reports/monte_carlo_v8_5yr.json`.
 
+### Stress Scenarios — v8 default config
+
+> Four failure modes tested by injecting synthetic shocks into realized daily returns.
+> Run: `scripts/run_stress_scenarios.py --returns data/reports/v8_daily_returns.csv`
+> Full results in `data/reports/stress_scenarios.csv`.
+
+| Scenario | CAGR | Sharpe | Max DD | DD delta | NAV |
+|---|---:|---:|---:|---:|---:|
+| **baseline** | +0.67% | -0.08 | -42.11% | — | $11.31M |
+| flash_crash_mild (−8% day) | +0.55% | -0.09 | -43.33% | −1.2% | $11.07M |
+| flash_crash_severe (−15% day) | +0.13% | -0.11 | -47.64% | −5.5% | $10.23M |
+| extended_crisis_30d | -2.99% | -0.31 | -73.72% | −31.6% | $5.64M |
+| extended_crisis_60d | -7.40% | -0.58 | -88.07% | −46.0% | $2.35M |
+| corr_shock_5d | +0.74% | -0.08 | -42.11% | 0.0% | $11.48M |
+| corr_shock_20d | +0.55% | -0.09 | -42.11% | 0.0% | $11.09M |
+| broken_hedge_mild (VIX > 35) | -6.80% | -0.59 | -79.72% | −37.6% | $2.66M |
+| broken_hedge_severe (VIX > 25) | -30.07% | -2.32 | -99.89% | −57.8% | $0.01M |
+| combined_worst | -32.96% | -2.45 | -99.95% | −57.8% | $0.01M |
+
+**Key findings:**
+- Flash crash in isolation is survivable — the single-day shock is already embedded in the historical sample.
+- Extended crisis (30–60 day prolonged drawdown beyond any historical precedent) is the structural killer — max DD blows through −73% to −88%.
+- **Broken hedge is the most dangerous failure mode.** If execution fails on VIX > 25 days (the put spread can't roll due to wide bid-ask), the strategy approaches ruin. This is the primary risk that daily-bar backtesting cannot see. The options overlay needs real execution stress-testing before live deployment.
+- Correlation shock has minimal impact — the strategy's long-short structure is robust to short-term diversification collapse because it's already low-beta by design.
+
+---
+
+### Known Data Gaps and Backtest Shortfalls
+
+These are real limitations of the current backtest, not synthetic approximations. No synthetic data is substituted — if real data is missing, the scenario is either excluded or clearly flagged.
+
+| Gap | Impact | What would fix it |
+|---|---|---|
+| **Intraday data — none available** | The intraday sleeve (`--enable-intraday-cache-sleeve`) loaded 0 symbols in every run. We have no tick or minute-bar history to backtest intraday reversion, execution timing, or open-to-close strategies. Any intraday edge claimed would be purely theoretical. | Polygon websocket or IBKR historical bars API for 1-min OHLCV going back 5+ years |
+| **VX (VIX futures) — no data** | VX dropped out of every run (`No provider returned daily bars for VX`). The VIX futures hedge sleeve is wired but never activated. Real vol-regime protection via VX has never been backtested. | CBOE VX continuous contract from Quandl/Polygon futures endpoint |
+| **Options execution realism** | The BS put-spread overlay prices correctly but assumes mid-market execution at roll. In practice, bid-ask on OTM puts at VIX > 40 can be 10–15% of premium. No slippage model for options. | Historical options chain data (CBOE DataShop, OptionMetrics) to model realized bid-ask at roll dates |
+| **Short history on 11 symbols** | BRK.B, MMC, FI, ODFL, HES, ANSS, WBA, COO, K, PARA, CTLT all dropped for short history (<2 years). Some are deleted/acquired companies — survivorship bias is partially mitigated but not fully. | Point-in-time S&P 500 constituent lists (Compustat or Sharadar) |
+| **Futures history shallow** | ES/NQ/RTY/YM have 1–3 years of history from IBKR; commodity futures have 3–7 years. The multi-asset sleeves are not stress-tested through 2008 or 2020. | CME Group historical continuous contracts, pre-2020 |
+| **FX carry not fully validated** | FX sleeve uses price-derived carry proxy (not actual interest rate differential). Carry signal is approximate. | Actual overnight rate differentials (Bloomberg, or free via FRED for major pairs) |
+
 ## Strategy Evolution
 
 ### v1 — Baseline (`backtest.py`)
