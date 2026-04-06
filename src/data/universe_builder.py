@@ -1,5 +1,5 @@
 """
-Dynamic universe builder for One Brain Fund.
+Dynamic universe builder for AlphaForge.
 
 Pulls all active US equities from Polygon.io (primary) and/or Alpaca (fallback),
 applies liquidity filters (ADV, price, market cap), and merges with static
@@ -708,7 +708,7 @@ def main() -> None:
     """Run universe builder from command line."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="One Brain Fund — Dynamic Universe Builder")
+    parser = argparse.ArgumentParser(description="AlphaForge — Dynamic Universe Builder")
     parser.add_argument(
         "--config",
         type=str,

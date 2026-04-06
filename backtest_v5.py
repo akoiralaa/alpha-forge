@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One Brain Fund v5 — Capacity-Aware Dynamic Allocation
+AlphaForge v5 — Capacity-Aware Dynamic Allocation
 
 What is new versus v4:
   - Central allocator tracks realized vs expected performance by strategy
@@ -515,7 +515,7 @@ def run(args):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="One Brain Fund v5 — allocator + capacity")
+    p = argparse.ArgumentParser(description="AlphaForge v5 — allocator + capacity")
     p.add_argument("--config", default="config/sp500_universe.yaml")
     p.add_argument("--env", default=".env")
     p.add_argument("--nav", type=float, default=10_000_000)

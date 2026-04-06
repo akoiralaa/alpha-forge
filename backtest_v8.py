@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One Brain Fund v8 — multi-asset expansion:
+AlphaForge v8 — multi-asset expansion:
   - v7 equity/event core
   - ETF alpha sleeve
   - Futures/commodities/bonds alpha sleeve
@@ -2332,7 +2332,7 @@ def run(args):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="One Brain Fund v8 — multi-asset + options-hedge overlay")
+    p = argparse.ArgumentParser(description="AlphaForge v8 — multi-asset + options-hedge overlay")
     p.add_argument("--config", default="config/sp500_universe.yaml")
     p.add_argument("--env", default=".env")
     p.add_argument("--start-date", default=None, help="Optional data start date (YYYY-MM-DD)")

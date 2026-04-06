@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One Brain Fund v7 — v4 alpha core plus point-in-time event/sentiment alpha.
+AlphaForge v7 — v4 alpha core plus point-in-time event/sentiment alpha.
 
 This version does not pretend sparse data is rich data. The event sleeve weight
 scales with actual coverage so the backtest stays honest when fundamentals/news
@@ -292,7 +292,7 @@ def run(args):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="One Brain Fund v7 — v4 core + event alpha")
+    p = argparse.ArgumentParser(description="AlphaForge v7 — v4 core + event alpha")
     p.add_argument("--config", default="config/sp500_universe.yaml")
     p.add_argument("--env", default=".env")
     p.add_argument("--nav", type=float, default=10_000_000)

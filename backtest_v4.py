@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One Brain Fund v4 — Multi-Strategy Engine (Target: Sharpe >= 1.0)
+AlphaForge v4 — Multi-Strategy Engine (Target: Sharpe >= 1.0)
 
 v3 achieved: 0.57 Sharpe, +8.39% CAGR, -32% max DD
 Problem: one strategy (cross-sectional momentum) can't hit 1.0 Sharpe alone.
@@ -1964,7 +1964,7 @@ def run(args):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="One Brain Fund v4 — Multi-Strategy Engine")
+    p = argparse.ArgumentParser(description="AlphaForge v4 — Multi-Strategy Engine")
     p.add_argument("--config", default="config/sp500_universe.yaml")
     p.add_argument("--env", default=".env")
     p.add_argument("--nav", type=float, default=10_000_000)

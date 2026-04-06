@@ -882,7 +882,7 @@ def run(args):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="One Brain Fund — Walk-Forward Backtest")
+    p = argparse.ArgumentParser(description="AlphaForge — Walk-Forward Backtest")
     p.add_argument("--config", default="config/data_layer.yaml")
     p.add_argument("--env", default=".env", help="env file with API keys")
     p.add_argument("--dynamic", action="store_true",

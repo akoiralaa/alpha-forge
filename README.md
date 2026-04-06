@@ -1,6 +1,6 @@
-# Quantitative Trading Platform
+# AlphaForge
 
-A systematic trading engine that ranks stocks cross-sectionally across the S&P 500 using multi-factor signals, constructs sector-neutral portfolios, and manages risk dynamically through volatility regimes and drawdown circuit breakers.
+A systematic multi-strategy trading engine that ranks stocks cross-sectionally across the S&P 500 using multi-factor signals, constructs sector-neutral portfolios, and manages risk dynamically through volatility regimes and drawdown circuit breakers.
 
 ## Backtest Results vs SPY (2007-2026, $10M starting NAV)
 

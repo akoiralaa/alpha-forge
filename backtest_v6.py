@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One Brain Fund v6 — v4 alpha core with capacity clipping and sparse PIT events.
+AlphaForge v6 — v4 alpha core with capacity clipping and sparse PIT events.
 
 Design goals:
   - keep the stronger v4 multi-factor engine as the return core
@@ -719,7 +719,7 @@ def run(args):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="One Brain Fund v6 — Investable overlay on v4")
+    p = argparse.ArgumentParser(description="AlphaForge v6 — Investable overlay on v4")
     p.add_argument("--config", default="config/sp500_universe.yaml")
     p.add_argument("--env", default=".env")
     p.add_argument("--nav", type=float, default=10_000_000)
