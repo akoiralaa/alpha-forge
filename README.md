@@ -59,50 +59,42 @@ Why `v10` underperformed:
 - `v9`: hybrid architecture that keeps `v8.2` alpha base and applies v10 consistency layers adaptively in stress regimes only.
 - `v10`: full v10 stack enabled (router, adaptive stress gate, whipsaw control, yearly risk budget, state parameter bank, weak-sleeve demote, intraday cache sleeve wiring, stricter event source quality); this run is a robustness-first profile and currently trails `v8.2`/`v9` on terminal NAV.
 
-### v8.2 Year-by-Year vs SPY (production baseline)
+### Monte Carlo — v8 default config (10,000 block-bootstrap simulations)
 
-> v4 shown below for historical progression. v8.2 full year-by-year is in `data/reports/version_comparison_v1_v10.csv`.
+> **Method:** stationary block bootstrap (block = 21 trading days) on 4,814 realized daily returns, 2007-06-18 → 2026-04-01.
+> No lookahead — returns come from the live backtest loop, not in-sample fit.
+> Run: `scripts/run_monte_carlo.py --returns data/reports/v8_daily_returns.csv --n-sims 10000`
 
-### v4 Year-by-Year vs SPY
+#### 1-Year Forward
 
-```
-Year   v4 Ret     SPY   Alpha    v4 DD   SPY DD
-────────────────────────────────────────────────────
-2007    +1.35%  -4.11%  +5.46%   -11.74%  -9.95%
-2008   -29.40% -37.71%  +8.31%   -31.60% -47.92%   ← crash protection
-2009    -2.40% +19.88% -22.28%    -9.41% -27.13%
-2010   +15.99% +10.99%  +5.01%    -9.30% -16.09%
-2011    -5.55%  -1.19%  -4.36%   -22.31% -19.49%
-2012   +20.56% +11.79%  +8.77%   -13.04%  -9.66%
-2013   +48.56% +26.37% +22.19%   -10.97%  -6.06%   ← +22% alpha
-2014   +13.09% +12.37%  +0.72%   -12.65%  -7.70%
-2015    +7.10%  -0.76%  +7.85%   -13.82% -12.29%
-2016    +3.89% +11.20%  -7.31%   -18.15%  -9.19%
-2017   +79.84% +19.38% +60.45%    -7.27%  -3.03%   ← +60% alpha
-2018    -8.91%  -7.01%  -1.90%   -26.66% -20.18%
-2019   +38.67% +28.65% +10.02%   -11.58%  -6.62%   ← +10% alpha
-2020   +20.09% +15.09%  +5.00%   -20.45% -34.10%   ← half SPY DD
-2021   +23.79% +28.79%  -5.00%   -13.85%  -5.42%
-2022   -20.72% -19.95%  -0.78%   -25.40% -25.36%
-2023    +5.93% +24.81% -18.88%   -16.59% -10.29%
-2024   +26.77% +24.00%  +2.77%   -24.66%  -8.41%
-2025   +16.94% +16.64%  +0.31%   -23.66% -19.00%
-2026    +2.01%  -4.81%  +6.82%   -19.60%  -9.13%
+| Metric | Value |
+|---|---:|
+| Median return | +1.0% |
+| 5th percentile | -20.0% |
+| 95th percentile | +25.3% |
+| Median max drawdown | -13.4% |
+| Worst 5th pct drawdown | -26.3% |
+| P(loss) | 46.9% |
+| P(return > 10%) | 26.0% |
+| P(return > 20%) | 9.5% |
+| P(max DD > 20%) | 17.7% |
+| P(max DD > 30%) | 1.8% |
 
-Beat SPY return:  13/20 years
-Loss years:        5/20
-```
+#### 5-Year Forward
 
-### Monte Carlo (10K simulations, 1-year forward)
+| Metric | Value |
+|---|---:|
+| Median total return | +3.8% |
+| 5th percentile | -37.6% |
+| 95th percentile | +69.9% |
+| Median annualised CAGR | +0.7% |
+| 5th pct CAGR | -9.0% |
+| 95th pct CAGR | +11.2% |
+| Median max drawdown | -28.2% |
+| P(loss over 5yr) | 45.0% |
+| P(max DD > 30%) | 43.4% |
 
-```
-Median return:  +10.16%
-5th percentile: -21.81%
-95th percentile:+53.01%
-Prob of loss:    31.4%
-Prob of >20%:    33.7%
-Median max DD:  -16.82%
-```
+> Note: these simulate the default parameter configuration. The production-tuned v8.2 (0.77 Sharpe, -20.45% max DD) requires the locked parameter set in `config/v8_production_locked.yaml`. Full results stored in `data/reports/monte_carlo_v8_1yr.json` and `data/reports/monte_carlo_v8_5yr.json`.
 
 ## Strategy Evolution
 
@@ -173,7 +165,7 @@ Tightened risk governance for lower drawdown and shorter time-under-water. Sacri
 Added point-in-time fundamental signals on top of the v4 core: SEC filings, earnings estimate revisions, and analyst sentiment — all gated for quality to prevent lookahead. Event weight tunable via `--force-event-weight`.
 
 ### v8 — Multi-Asset + Execution Realism (`backtest_v8.py`)
-Expanded tradeable universe to ETF, futures, and FX sleeves. Added a synthetic options hedge path for downside protection. Introduced strict walk-forward and no-lookahead validation tooling. Max DD dropped to -20.57%.
+Expanded tradeable universe to ETF, futures, and FX sleeves. Added a **Black-Scholes put-spread overlay** priced with real CBOE VIX history (FRED VIXCLS, 1990–present) — puts are correctly 12.8× more expensive at VIX=80 vs VIX=20, capturing crisis-protection value the old synthetic model missed. Introduced strict walk-forward and no-lookahead validation tooling. Max DD dropped to -20.57%.
 
 ### v8.1 — Macro Overlay (`backtest_v8.py --enable-macro-overlay`)
 v8 plus a lightweight FRED macro panel (yield curve, unemployment, rates) as an optional risk-scaling layer. Macro signals are de-risk only — they reduce gross exposure but don't add long positions.
@@ -247,8 +239,8 @@ All data cached as Parquet: ~/.one_brain_fund/cache/bars/
 ### Installation
 
 ```bash
-git clone https://github.com/akoiralaa/algorithmic-trading-platform.git
-cd algorithmic-trading-platform
+git clone https://github.com/akoiralaa/alpha-forge.git
+cd alpha-forge
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
@@ -355,10 +347,3 @@ python3 backtest_v4.py --no-cache
 ./.venv/bin/python scripts/run_v8_regime_splits.py --train-years 5
 ```
 
-## Design Principles
-
-1. **One Brain** — Single feature engine, single Market State Vector, all asset classes
-2. **Cross-Sectional** — Rank stocks against each other, not against absolute thresholds
-3. **Survival > Returns** — Drawdown circuit breakers are hard constraints
-4. **No Lookahead** — Walk-forward only, all signals use past data
-5. **Institutional Data** — IBKR + Polygon + Alpaca only.

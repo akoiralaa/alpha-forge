@@ -2328,6 +2328,11 @@ def run(args):
     if args.metrics_json:
         with open(args.metrics_json, "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2)
+    if args.output_returns:
+        os.makedirs(os.path.dirname(os.path.abspath(args.output_returns)), exist_ok=True)
+        ret_df = pd.DataFrame({"gross_ret": net_ret.values, "lp_ret": lp_ret.values}, index=net_ret.index)
+        ret_df.index.name = "date"
+        ret_df.to_csv(args.output_returns)
     return metrics
 
 
@@ -2503,6 +2508,7 @@ if __name__ == "__main__":
     p.add_argument("--yearly-budget-max-scale", type=float, default=1.10)
     p.add_argument("--yearly-budget-smooth-days", type=int, default=5)
     p.add_argument("--metrics-json", default=None)
+    p.add_argument("--output-returns", default=None, help="Write daily gross/lp returns to CSV for Monte Carlo")
     p.add_argument("--warmup-days", type=int, default=300)
     p.add_argument("--min-rows", type=int, default=700)
     p.add_argument("--cache-complete-only", action="store_true")
