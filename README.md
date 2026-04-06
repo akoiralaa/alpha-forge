@@ -267,14 +267,37 @@ Live streaming:            IBKR only
 All data cached as Parquet: ~/.alphaforge/cache/bars/
 ```
 
-## Setup
+## Paper Trading
+
+Live paper trading runs against IB Gateway on port 4002 (Gateway default).
+All fills are simulated internally by `PaperBroker` — no real orders are submitted.
 
 ### Prerequisites
 
+- IB Gateway running and logged in (paper account, port 4002)
 - Python 3.12+
-- Interactive Brokers TWS or IB Gateway (paper account is free)
 - Polygon.io API key (free tier works for daily bars)
-- Alpaca Markets API key (free)
+- Alpaca Markets API key (free, used for historical bar backfill only)
+
+### Running a paper session
+
+```bash
+# Full universe (all asset classes in config/data_layer.yaml)
+python run.py --port 4002 --config config/data_layer.yaml
+
+# ETF sleeve only — smaller, good for first sessions
+python run.py --port 4002 --symbols SPY QQQ XLK XLF XLE XLV --nav 1000000
+```
+
+The engine connects, subscribes to delayed market data, and starts processing ticks at market open (9:30am ET).
+Ctrl+C ends the session — a session report prints to terminal and a journal entry is saved to `journals/YYYY-MM-DD.json`.
+
+**Each morning checklist:**
+1. Open IB Gateway, confirm login (Gateway logs out overnight — check before 9:30am ET)
+2. Confirm "API Server Connected" and "Market Data Farm" green in Gateway
+3. Run the command above and leave it running
+
+**Fallback:** if IB Gateway is unavailable, `run_alpaca.py` streams US equities only (sector ETFs) via Alpaca's free websocket — same engine, same risk controls, equity sleeve only.
 
 ### Installation
 
